@@ -1,16 +1,6 @@
-# app.py ✅ BOSS-READY + TIEMPOS EXACTOS (HH:MM) + BACK OFFICE = RASTREO REAL (como tu Transito Global 2.0)
-# ✅ Flujo EXACTO (pills):
-#    Total | Nuevo | Back Office | Solicitado | En preparacion | En entrega | Reprogramado | Entregado
-# ✅ Back Office (Rastreo) = columna "Back Office" (parse robusto, EXACTAMENTE como tu código referencia)
-# ✅ Otros pasos (Solicitado/Preparacion/Entrega/Entregado/Reprogramado):
-#    - Si el TVF trae columnas con fecha/hora, se detectan y se usan
-#    - Si NO existen, se quedan como NaT (no se inventan)
-# ✅ Activación/Entrega (para lead time) se toma SIEMPRE de:
-#    1) "Fecha activación"  2) "Fecha venta"  3) (fallback) "Venta" si parece fecha-hora
-# ✅ Fix clave: si NO hay activación todavía -> muestra "En proceso · HH:MM" en BO→Act y Total (en lugar de "—")
-# ✅ Gráficas interactivas: Funnel, barras, backlog, tendencias, SLA gauge, SLA trend, heatmap,
-#    bottleneck, waterfall por etapas, top equipos, críticos.
-# ✅ Boxplot ELIMINADO
+# app.py ✅ BOSS-READY + INYECCIÓN DIRECTA DE RASTREO
+# ✅ Fix definitivo: Python ahora extrae "En preparacion" y "En entrega" directamente 
+#    de la tabla dbo.pedido_telefonia_rastreo y hace un JOIN (merge) automático.
 
 import streamlit as st
 import pandas as pd
@@ -45,7 +35,7 @@ FLOW_STAGES_NO_TOTAL = ["Nuevo", "Back Office", "Solicitado", "En preparacion", 
 # STREAMLIT CONFIG
 # -------------------------------------------------
 st.set_page_config(
-    page_title="Órdenes — Flujo & Tiempos (Nuevo → Activada)",
+    page_title="Órdenes — Flujo & Tiempos",
     page_icon="⏱️",
     layout="wide",
 )
@@ -226,11 +216,6 @@ def fmt_timedelta(td) -> str:
     return f"{days}d {hh:02d}:{mm:02d}" if days > 0 else f"{hh:02d}:{mm:02d}"
 
 def fmt_done_or_in_process(td_done, td_age):
-    """
-    If td_done exists -> HH:MM
-    Else if td_age exists -> 'En proceso · HH:MM'
-    Else -> '—'
-    """
     if td_done is not None and pd.notna(td_done):
         return fmt_timedelta(td_done)
     if td_age is not None and pd.notna(td_age):
@@ -267,13 +252,14 @@ def render_flow_pills(counts: dict):
     st.markdown(html, unsafe_allow_html=True)
 
 # -------------------------------------------------
-# TEXT NORMALIZATION
+# TEXT NORMALIZATION & SANITIZATION (ANTI-1900)
 # -------------------------------------------------
 def _norm_col(s: str) -> str:
     if s is None:
         return ""
     s = str(s).strip().lower()
     s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("utf-8", "ignore")
+    s = s.replace("_", " ")
     s = " ".join(s.split())
     return s
 
@@ -296,15 +282,21 @@ def canon_estatus(x: str) -> str:
         return "Entregado"
     return str(x).strip()
 
-# -------------------------------------------------
-# DATETIME PARSING (Back Office EXACT like your reference)
-# -------------------------------------------------
+def sanitize_dates(dt_series: pd.Series) -> pd.Series:
+    if not pd.api.types.is_datetime64_any_dtype(dt_series):
+        dt_series = pd.to_datetime(dt_series, errors="coerce")
+    return dt_series.where(dt_series >= pd.Timestamp('2000-01-01'), pd.NaT)
+
 def _extract_datetime_text(series: pd.Series) -> pd.Series:
     s = series.astype(str).str.strip()
-    s = s.replace({"nan": "", "none": "", "nat": ""})
+    s = s.replace({
+        "nan": "", "none": "", "nat": "", "NaN": "", "None": "", "NaT": "", "<NA>": "", "null": "", "Null": "",
+        "1900-01-01 00:00:00": "", "1900-01-01 00:00:00.000": "", "1900-01-01": "", "1900-01-01T00:00:00": ""
+    })
     s = s.where(s != "", np.nan)
+    
     if s.notna().any():
-        pat = r"(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\s+\d{1,2}:\d{2}(?::\d{2})?)|(\d{4}[/-]\d{1,2}[/-]\d{1,2}\s+\d{1,2}:\d{2}(?::\d{2})?)"
+        pat = r"(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?)|(\d{4}[/-]\d{1,2}[/-]\d{1,2}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?)"
         ext = s.astype(str).str.extract(pat)
         ext = ext[0].fillna(ext[1])
         s2 = ext.where(ext.notna(), s)
@@ -312,72 +304,38 @@ def _extract_datetime_text(series: pd.Series) -> pd.Series:
     return s
 
 def parse_dt_both(series: pd.Series) -> tuple:
+    dt_native = pd.to_datetime(series, errors='coerce')
     s2 = _extract_datetime_text(series)
     dt_df = pd.to_datetime(s2, errors="coerce", dayfirst=True)
     dt_mf = pd.to_datetime(s2, errors="coerce", dayfirst=False)
-    return dt_df, dt_mf
+    
+    dt_df = dt_df.where(dt_df.notna(), dt_native)
+    dt_mf = dt_mf.where(dt_mf.notna(), dt_native)
+    return sanitize_dates(dt_df), sanitize_dates(dt_mf)
 
-def choose_dt_rowwise(dt_df: pd.Series, dt_mf: pd.Series, created: pd.Series | None, bo: pd.Series | None) -> pd.Series:
+def choose_dt_rowwise(dt_df: pd.Series, dt_mf: pd.Series, created: pd.Series | None=None, bo: pd.Series | None=None) -> pd.Series:
     out = dt_df.copy()
     out = out.where(~(dt_df.isna() & dt_mf.notna()), dt_mf)
-
-    if created is None and bo is None:
-        return out
-
-    if created is not None:
-        c = created
-        valid_df_c = dt_df.notna() & c.notna() & (dt_df >= c) & (dt_df <= c + pd.Timedelta(days=730))
-        valid_mf_c = dt_mf.notna() & c.notna() & (dt_mf >= c) & (dt_mf <= c + pd.Timedelta(days=730))
-    else:
-        valid_df_c = pd.Series(False, index=dt_df.index)
-        valid_mf_c = pd.Series(False, index=dt_df.index)
-
-    if bo is not None:
-        b = bo
-        valid_df_b = dt_df.notna() & b.notna() & (dt_df >= b) & (dt_df <= b + pd.Timedelta(days=730))
-        valid_mf_b = dt_mf.notna() & b.notna() & (dt_mf >= b) & (dt_mf <= b + pd.Timedelta(days=730))
-    else:
-        valid_df_b = pd.Series(False, index=dt_df.index)
-        valid_mf_b = pd.Series(False, index=dt_df.index)
-
-    valid_df = valid_df_c | valid_df_b
-    valid_mf = valid_mf_c | valid_mf_b
-    out = out.where(~(valid_mf & ~valid_df), dt_mf)
-    return out
+    return sanitize_dates(out)
 
 def parse_backoffice_datetime(series: pd.Series, window_start: date | None = None, window_end: date | None = None) -> pd.Series:
-    # ✅ EXACT same logic as your reference
-    s = series.astype(str).str.strip()
-    s = s.replace({"nan": "", "None": "", "NaT": ""})
-    s = s.where(s != "", np.nan)
-
-    if s.notna().any():
-        pat = r"(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\s+\d{1,2}:\d{2}(?::\d{2})?)|(\d{4}[/-]\d{1,2}[/-]\d{1,2}\s+\d{1,2}:\d{2}(?::\d{2})?)"
-        ext = s.astype(str).str.extract(pat)
-        ext = ext[0].fillna(ext[1])
-        s2 = ext.where(ext.notna(), s)
-    else:
-        s2 = s
-
-    dt_dayfirst = pd.to_datetime(s2, errors="coerce", dayfirst=True)
-    dt_monthfirst = pd.to_datetime(s2, errors="coerce", dayfirst=False)
+    dt_df, dt_mf = parse_dt_both(series)
 
     if window_start is None or window_end is None:
-        return dt_dayfirst
+        return dt_df
 
     w0 = pd.Timestamp(window_start)
     w1 = pd.Timestamp(window_end) + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1)
 
-    in1 = dt_dayfirst.between(w0, w1)
-    in2 = dt_monthfirst.between(w0, w1)
+    in1 = dt_df.between(w0, w1)
+    in2 = dt_mf.between(w0, w1)
 
-    out = dt_dayfirst.copy()
-    out = out.where(~(in2 & ~in1), dt_monthfirst)
-    out = out.where(~(dt_dayfirst.isna() & dt_monthfirst.notna()), dt_monthfirst)
+    out = dt_df.copy()
+    out = out.where(~(in2 & ~in1), dt_mf)
+    out = out.where(~(dt_df.isna() & dt_mf.notna()), dt_mf)
     return out
 
 def choose_backoffice_dt(df: pd.DataFrame, window_start: date, window_end: date) -> pd.Series:
-    # ✅ EXACT like your reference (uses BO_DT_DF / BO_DT_MF if exist)
     if "BO_DT_DF" in df.columns and "BO_DT_MF" in df.columns:
         dt_dayfirst = df["BO_DT_DF"]
         dt_monthfirst = df["BO_DT_MF"]
@@ -391,20 +349,13 @@ def choose_backoffice_dt(df: pd.DataFrame, window_start: date, window_end: date)
         out = dt_dayfirst.copy()
         out = out.where(~(in2 & ~in1), dt_monthfirst)
         out = out.where(~(dt_dayfirst.isna() & dt_monthfirst.notna()), dt_monthfirst)
-        return out
-
+        return sanitize_dates(out)
     return parse_backoffice_datetime(df["Back Office"], window_start=window_start, window_end=window_end)
 
 def _reference_end_dt(fecha_fin: date) -> datetime:
     return datetime.now() if fecha_fin == date.today() else datetime.combine(fecha_fin, time(23, 59, 59))
 
 def pick_activation_dt(df: pd.DataFrame) -> tuple:
-    """
-    ✅ Priority:
-    1) Fecha activación
-    2) Fecha venta
-    3) Venta fallback if it parses as datetime
-    """
     if df is None or df.empty:
         return pd.Series(pd.NaT, index=df.index), None
 
@@ -441,43 +392,36 @@ def pick_activation_dt(df: pd.DataFrame) -> tuple:
 
     return pd.Series(pd.NaT, index=df.index), None
 
-# -------------------------------------------------
-# STAGE DATETIME (auto-detect columns for each stage)
-# -------------------------------------------------
 def pick_stage_dt_from_columns(df: pd.DataFrame, stage: str, created: pd.Series, bo: pd.Series) -> tuple:
-    """
-    Tries to find datetime column(s) for a given stage by scanning df columns.
-    Returns (dt_series, source_column_name or None).
-    """
     if df is None or df.empty:
         return pd.Series(pd.NaT, index=df.index), None
 
     stage_n = _norm_col(stage)
 
     kw = {
-        "solicitado": ["solicitado", "fecha solicitado", "fecha_solicitado"],
-        "en preparacion": ["en preparacion", "preparacion", "preparación", "fecha preparacion", "fecha_preparacion"],
-        "en entrega": ["en entrega", "fecha en entrega", "fecha_en_entrega"],
-        "reprogramado": ["reprogramado", "fecha reprogramado", "fecha_reprogramado"],
-        "entregado": ["entregado", "fecha entrega", "fecha_entrega", "fecha entregado", "fecha_entregado"],
+        "solicitado": ["solicitado", "solicit", "solic"],
+        "en preparacion": ["preparacion", "preparación", "prep", "armado", "empaque"],
+        "en entrega": ["en entrega", "entrega", "ruta", "transito", "trayecto"],
+        "reprogramado": ["reprogramado", "reprog"],
+        "entregado": ["entregado", "fecha entrega", "fecha entregado", "fin"],
     }
-    keys = kw.get(stage_n, [stage_n, f"fecha {stage_n}", f"fecha_{stage_n}"])
+    keys = kw.get(stage_n, [stage_n])
 
     cols = []
     norm_cols = {c: _norm_col(c) for c in df.columns}
 
     for c, nc in norm_cols.items():
-        if nc == stage_n or nc == f"fecha {stage_n}" or nc == f"fecha_{stage_n}":
-            cols.append(c)
-    for c, nc in norm_cols.items():
-        if c in cols:
+        if stage_n == "en entrega" and ("fecha entrega" in nc or "entregado" in nc):
             continue
+        if stage_n == "entregado" and nc == "en entrega":
+            continue
+            
         if any(k in nc for k in keys):
             cols.append(c)
 
     best_col = None
     best_dt = pd.Series(pd.NaT, index=df.index)
-    best_nonnull = 0
+    best_nonnull = -1
 
     for c in cols:
         dt_df, dt_mf = parse_dt_both(df[c])
@@ -591,18 +535,66 @@ def load_consulta1(fecha_ini: date, fecha_fin: date) -> pd.DataFrame:
     cur.close()
     return df
 
+# ✅ FIX NUEVO: Función para conectarse directo a la tabla de bitácora
+@st.cache_data
+def load_rastreo_extra(fecha_ini: date, fecha_fin: date) -> pd.DataFrame:
+    fi = fecha_ini.strftime("%Y%m%d")
+    ff = fecha_fin.strftime("%Y%m%d")
+
+    # Esta consulta cruza la tabla de bitácora con los datos filtrados para sacar SOLO lo que nos importa
+    sql = f"""
+    SELECT 
+        r.id_pedido_telefonia AS Programacion, 
+        r.accion, 
+        MAX(r.fecha) AS fecha_rastreo
+    FROM dbo.pedido_telefonia_rastreo r
+    INNER JOIN reporte_programacion_entrega('empresa_maestra', 4, '{fi}', '{ff}') t
+        ON r.id_pedido_telefonia = t.Programacion
+    WHERE r.accion IN ('En preparacion', 'En entrega', 'Reprogramado')
+    GROUP BY r.id_pedido_telefonia, r.accion
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SET NOCOUNT ON; SET ANSI_WARNINGS OFF;")
+    df = pd.read_sql(sql, conn)
+    cur.execute("SET ANSI_WARNINGS ON;")
+    cur.close()
+    return df
+
 # -------------------------------------------------
 # TRANSFORM
 # -------------------------------------------------
-def transform_consulta1(df_raw: pd.DataFrame, hoja: pd.DataFrame) -> pd.DataFrame:
+def transform_consulta1(df_raw: pd.DataFrame, hoja: pd.DataFrame, rastreo_extra: pd.DataFrame) -> pd.DataFrame:
     df = df_raw.copy()
 
-    for col in ["Centro", "Estatus", "Back Office", "Vendedor", "Cliente"]:
-        if col in df.columns:
-            df[col] = df[col].astype(str).str.strip().replace({"nan": np.nan, "None": np.nan})
+    # ✅ FIX NUEVO: Pegamos las columnas faltantes directamente desde la bitácora
+    if rastreo_extra is not None and not rastreo_extra.empty:
+        # Voltea la tabla para convertir "accion" en nuevas columnas de fechas
+        piv = rastreo_extra.pivot_table(index="Programacion", columns="accion", values="fecha_rastreo", aggfunc="max").reset_index()
+        
+        # Las nombramos para que el scanner automático las agarre perfecto
+        rename_map = {
+            "En preparacion": "Fecha En preparacion Exacta",
+            "En entrega": "Fecha En entrega Exacta",
+            "Reprogramado": "Fecha Reprogramado Exacta"
+        }
+        piv.rename(columns=rename_map, inplace=True)
+        
+        if "Programacion" in df.columns:
+            df = df.merge(piv, on="Programacion", how="left")
 
-    if "Venta" in df.columns:
-        df["Venta"] = df["Venta"].replace({"nan": np.nan, "None": np.nan})
+    # Limpieza estándar
+    clean_cols = [
+        "Centro", "Estatus", "Back Office", "Vendedor", "Cliente",
+        "Nuevo", "Solicitado", "En preparacion", "En preparación", 
+        "En entrega", "Reprogramado", "Entregado", "Fecha creacion", "Venta"
+    ]
+    for col in df.columns:
+        if col in clean_cols or "fecha" in col.lower() or any(stg in col for stg in ["Solicitado", "preparacion", "entrega", "Reprogramado", "Entregado"]):
+            df[col] = df[col].astype(str).str.strip().replace({
+                "nan": np.nan, "None": np.nan, "NaT": np.nan, "nat": np.nan, "none": np.nan, "<NA>": np.nan, "null": np.nan,
+                "1900-01-01 00:00:00": np.nan, "1900-01-01 00:00:00.000": np.nan, "1900-01-01": np.nan, "1900-01-01T00:00:00": np.nan
+            })
 
     if "Vendedor" in df.columns:
         df = df[df["Vendedor"].astype(str).str.upper() != EXCLUDED_VENDOR].copy()
@@ -610,14 +602,12 @@ def transform_consulta1(df_raw: pd.DataFrame, hoja: pd.DataFrame) -> pd.DataFram
     if "Estatus" in df.columns:
         df["Estatus"] = df["Estatus"].astype(str).map(canon_estatus)
 
-    # Centro Original
     df["Centro Original"] = pd.Series(pd.NA, index=df.index, dtype="object")
     mask_cc2 = df["Centro"].astype(str).str.contains("EXP ATT C CENTER 2", na=False)
     mask_jv = df["Centro"].astype(str).str.contains("EXP ATT C CENTER JUAREZ", na=False)
     df.loc[mask_cc2, "Centro Original"] = "CC2"
     df.loc[mask_jv, "Centro Original"] = "CC JV"
 
-    # Join supervisor
     empleados_join = hoja[hoja["Puesto"].isin(["ASESOR TELEFONICO 7500", "EJECUTIVO TELEFONICO 6500 AM"])].copy()
     empleados_join = empleados_join[empleados_join["JefeDirecto"] != "ENCUBADORA"].drop_duplicates(subset=["NombreCompleto"])
     empleados_join = empleados_join[empleados_join["NombreCompleto"].str.upper() != EXCLUDED_VENDOR]
@@ -632,16 +622,14 @@ def transform_consulta1(df_raw: pd.DataFrame, hoja: pd.DataFrame) -> pd.DataFram
     df.drop(columns=["Nombre Completo"], inplace=True, errors="ignore")
     df["Jefe directo"] = df["Jefe directo"].fillna("").astype(str).str.strip().replace("", "ENCUBADORA")
 
-    # Fecha creacion exacta
     if "Fecha creacion" in df.columns:
         df["Fecha creacion"] = pd.to_datetime(df["Fecha creacion"], errors="coerce", dayfirst=True)
+        df["Fecha creacion"] = sanitize_dates(df["Fecha creacion"])
 
-    # Pre-parse BO datetimes ONCE (como tu referencia)
     if "Back Office" in df.columns:
         s = df["Back Office"].astype(str).str.strip()
-        s = s.replace({"nan": "", "None": "", "NaT": ""})
+        s = s.replace({"nan": "", "None": "", "NaT": "", "<NA>": "", "null": ""})
         s = s.where(s != "", np.nan)
-
         if s.notna().any():
             pat = r"(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\s+\d{1,2}:\d{2}(?::\d{2})?)|(\d{4}[/-]\d{1,2}[/-]\d{1,2}\s+\d{1,2}:\d{2}(?::\d{2})?)"
             ext = s.astype(str).str.extract(pat)
@@ -651,12 +639,15 @@ def transform_consulta1(df_raw: pd.DataFrame, hoja: pd.DataFrame) -> pd.DataFram
             s2 = s
 
         df["BO_DT_DF"] = pd.to_datetime(s2, errors="coerce", dayfirst=True)
+        df["BO_DT_DF"] = sanitize_dates(df["BO_DT_DF"])
+        
         df["BO_DT_MF"] = pd.to_datetime(s2, errors="coerce", dayfirst=False)
+        df["BO_DT_MF"] = sanitize_dates(df["BO_DT_MF"])
 
     return df
 
 # -------------------------------------------------
-# BUILD VIEW (Exact timedeltas + stage timestamps)
+# BUILD VIEW
 # -------------------------------------------------
 def build_view(df_ctx: pd.DataFrame, fecha_ini: date, fecha_fin: date):
     meta = {
@@ -667,13 +658,13 @@ def build_view(df_ctx: pd.DataFrame, fecha_ini: date, fecha_fin: date):
     df = df_ctx.copy()
 
     df["CREATED_DT"] = pd.to_datetime(df["Fecha creacion"], errors="coerce", dayfirst=True) if "Fecha creacion" in df.columns else pd.NaT
-
-    # ✅ Back Office = Rastreo timestamp from "Back Office"
+    df["CREATED_DT"] = sanitize_dates(df["CREATED_DT"])
+    
     df["BO_DT"] = choose_backoffice_dt(df, window_start=fecha_ini, window_end=fecha_fin) if "Back Office" in df.columns else pd.NaT
+    
     meta["stage_sources"]["Nuevo"] = "Fecha creacion" if "Fecha creacion" in df.columns else None
     meta["stage_sources"]["Back Office"] = "Back Office" if "Back Office" in df.columns else None
 
-    # Stage timestamps (only if TVF brings them)
     df["STG_Nuevo_DT"] = df["CREATED_DT"]
     df["STG_BackOffice_DT"] = df["BO_DT"]
 
@@ -685,16 +676,14 @@ def build_view(df_ctx: pd.DataFrame, fecha_ini: date, fecha_fin: date):
         ("Entregado", "STG_Entregado_DT"),
     ]:
         dt_stage, src = pick_stage_dt_from_columns(df, stage, created=df["CREATED_DT"], bo=df["BO_DT"])
-        df[outcol] = dt_stage
+        df[outcol] = sanitize_dates(dt_stage)
         meta["stage_sources"][stage] = src
 
-    # Activation datetime (your priority rule)
     act_dt, act_col = pick_activation_dt(df)
-    df["ACT_DT"] = act_dt
+    df["ACT_DT"] = sanitize_dates(act_dt)
     meta["activation_col"] = act_col
     meta["has_activation_dt"] = bool(df["ACT_DT"].notna().any())
 
-    # Venta ok?
     if "Venta" in df.columns:
         venta = df["Venta"]
         venta_ok = ~(venta.isna() | venta.astype(str).str.strip().eq(""))
@@ -704,12 +693,10 @@ def build_view(df_ctx: pd.DataFrame, fecha_ini: date, fecha_fin: date):
     df["IS_ACTIVADA_COMPLETA"] = venta_ok | df["ACT_DT"].notna()
     df["ENTREGADO_SIN_VENTA"] = (df["Estatus"].astype(str).eq("Entregado")) & (~venta_ok)
 
-    # Core exact timedeltas
     df["TD_Creacion_a_BO"] = df["BO_DT"] - df["CREATED_DT"]
     df["TD_BO_a_Act"] = df["ACT_DT"] - df["BO_DT"]
     df["TD_Creacion_a_Act"] = df["ACT_DT"] - df["CREATED_DT"]
 
-    # Stage-to-stage from detected timestamps
     def safe_td(a, b):
         td = a - b
         td = td.where(td >= pd.Timedelta(0))
@@ -720,7 +707,6 @@ def build_view(df_ctx: pd.DataFrame, fecha_ini: date, fecha_fin: date):
     df["TD_Preparacion_a_EnEntrega"] = safe_td(df["STG_EnEntrega_DT"], df["STG_EnPreparacion_DT"])
     df["TD_EnEntrega_a_Entregado"] = safe_td(df["STG_Entregado_DT"], df["STG_EnEntrega_DT"])
 
-    # Aging
     ref_dt = pd.Timestamp(_reference_end_dt(fecha_fin))
     df["TD_Age_Desde_Creacion"] = ref_dt - df["CREATED_DT"]
     df["TD_Age_Desde_BO"] = ref_dt - df["BO_DT"]
@@ -728,14 +714,12 @@ def build_view(df_ctx: pd.DataFrame, fecha_ini: date, fecha_fin: date):
     for c in ["TD_Creacion_a_BO","TD_BO_a_Act","TD_Creacion_a_Act","TD_Age_Desde_Creacion","TD_Age_Desde_BO"]:
         df.loc[df[c] < pd.Timedelta(0), c] = pd.NaT
 
-    # Numeric hours for charts
     df["H_Creacion_a_BO"] = df["TD_Creacion_a_BO"].apply(td_to_hours)
     df["H_BO_a_Act"] = df["TD_BO_a_Act"].apply(td_to_hours)
     df["H_Creacion_a_Act"] = df["TD_Creacion_a_Act"].apply(td_to_hours)
     df["H_Age_Desde_Creacion"] = df["TD_Age_Desde_Creacion"].apply(td_to_hours)
     df["H_Age_Desde_BO"] = df["TD_Age_Desde_BO"].apply(td_to_hours)
 
-    # time fields
     df["CREATED_DATE"] = df["CREATED_DT"].dt.date
     df["CREATED_HOUR"] = df["CREATED_DT"].dt.hour
     df["CREATED_DOW"] = df["CREATED_DT"].dt.day_name()
@@ -792,25 +776,11 @@ def make_bottleneck_chart(view: pd.DataFrame) -> go.Figure | None:
 def make_trends(view: pd.DataFrame, meta: dict) -> go.Figure | None:
     if view.empty or view["CREATED_DT"].isna().all():
         return None
-
-    created = (
-        view.assign(Fecha=view["CREATED_DT"].dt.date)
-        .groupby("Fecha", as_index=False)
-        .size()
-        .rename(columns={"size": "Creadas"})
-    )
-
+    created = (view.assign(Fecha=view["CREATED_DT"].dt.date).groupby("Fecha", as_index=False).size().rename(columns={"size": "Creadas"}))
     if meta.get("has_activation_dt", False) and view["ACT_DT"].notna().any():
-        activated = (
-            view[view["ACT_DT"].notna()]
-            .assign(Fecha=view["ACT_DT"].dt.date)
-            .groupby("Fecha", as_index=False)
-            .size()
-            .rename(columns={"size": "Activadas"})
-        )
+        activated = (view[view["ACT_DT"].notna()].assign(Fecha=view["ACT_DT"].dt.date).groupby("Fecha", as_index=False).size().rename(columns={"size": "Activadas"}))
     else:
         activated = pd.DataFrame({"Fecha": [], "Activadas": []})
-
     trend = created.merge(activated, on="Fecha", how="left")
     trend["Activadas"] = trend["Activadas"].fillna(0).astype(int)
     trend_long = trend.melt(id_vars="Fecha", var_name="Tipo", value_name="Total")
@@ -952,7 +922,8 @@ def main():
     with st.spinner("Cargando datos..."):
         hoja = load_hoja1()
         raw = load_consulta1(fecha_ini, fecha_fin)
-        consulta = transform_consulta1(raw, hoja)
+        rastreo_extra = load_rastreo_extra(fecha_ini, fecha_fin)
+        consulta = transform_consulta1(raw, hoja, rastreo_extra)
 
     # Optional filters
     with st.sidebar.expander("Filtros (opcional)"):
@@ -998,14 +969,11 @@ def main():
             st.subheader("Flujo de Órdenes (operación)")
             render_flow_pills(counts)
 
-
-
             total = int(len(view))
             entregado = int((view["Estatus"].astype(str).eq("Entregado")).sum())
             activadas_completas = int(view["IS_ACTIVADA_COMPLETA"].sum())
             entregado_sin_venta = int(view["ENTREGADO_SIN_VENTA"].sum())
 
-            # SLA
             if meta["has_activation_dt"] and view["H_BO_a_Act"].notna().any():
                 ba = view[view["H_BO_a_Act"].notna()].copy()
                 sla_ok = int((ba["H_BO_a_Act"] <= float(sla_h)).sum())
@@ -1017,7 +985,6 @@ def main():
             med_td_cb = view["TD_Creacion_a_BO"].dropna()
             med_nuevo_bo = med_td_cb.median() if not med_td_cb.empty else pd.NaT
 
-            # medians for activated + backlog ages
             med_bo_act = view.loc[view["TD_BO_a_Act"].notna(), "TD_BO_a_Act"].median() if view["TD_BO_a_Act"].notna().any() else pd.NaT
             med_age_bo = view.loc[view["TD_Age_Desde_BO"].notna(), "TD_Age_Desde_BO"].median() if view["TD_Age_Desde_BO"].notna().any() else pd.NaT
 
@@ -1115,7 +1082,6 @@ def main():
                     st.plotly_chart(fig_sla_tr, use_container_width=True)
 
             with cB:
-                # If activation not available, show "age since BO" distribution (super intuitive)
                 if meta["has_activation_dt"] and view["H_BO_a_Act"].notna().any():
                     fig = px.histogram(view[view["H_BO_a_Act"].notna()], x="H_BO_a_Act", nbins=40,
                                        title="Distribución: BO → Activación (horas exactas)")
@@ -1160,7 +1126,6 @@ def main():
             work = view.copy()
             E = work["Estatus"].astype(str)
 
-            # Stage-aware aging: Back Office uses age since BO, others since creation
             work["Aging_h"] = np.where(
                 E.eq("Back Office"),
                 work["H_Age_Desde_BO"],
@@ -1219,8 +1184,6 @@ def main():
 
             detail = view.copy()
             detail["Tiempo Nuevo→BO (HH:MM)"] = detail["TD_Creacion_a_BO"].apply(fmt_timedelta)
-
-            # ✅ FIX: show "En proceso · HH:MM" instead of "—" when not activated yet
             detail["Tiempo BO→Act (HH:MM)"] = [
                 fmt_done_or_in_process(done, age)
                 for done, age in zip(detail["TD_BO_a_Act"], detail["TD_Age_Desde_BO"])
@@ -1233,10 +1196,11 @@ def main():
             detail["Antigüedad desde Creación (HH:MM)"] = detail["TD_Age_Desde_Creacion"].apply(fmt_timedelta)
             detail["Antigüedad desde BO (HH:MM)"] = detail["TD_Age_Desde_BO"].apply(fmt_timedelta)
 
-            # stage timestamps (if exist)
+            # Volvemos a sanitizar justo antes de mostrar (doble seguridad visual)
             for c in ["STG_Solicitado_DT","STG_EnPreparacion_DT","STG_EnEntrega_DT","STG_Reprogramado_DT","STG_Entregado_DT"]:
                 if c in detail.columns:
                     detail[c] = pd.to_datetime(detail[c], errors="coerce")
+                    detail[c] = sanitize_dates(detail[c])
 
             keep = [c for c in [
                 "Estatus", "Jefe directo", "Vendedor", "Cliente", "Telefono", "Folio", "Centro",
@@ -1247,9 +1211,21 @@ def main():
                 "ENTREGADO_SIN_VENTA"
             ] if c in detail.columns]
 
-            show = detail[keep].copy().rename(columns={"Vendedor": "Ejecutivo"})
-            if "CREATED_DT" in show.columns:
-                show = show.sort_values("CREATED_DT", ascending=False)
+            rename_map = {
+                "Vendedor": "Ejecutivo",
+                "STG_Solicitado_DT": "Fecha Solicitado",
+                "STG_EnPreparacion_DT": "Fecha En preparacion",
+                "STG_EnEntrega_DT": "Fecha En entrega",
+                "STG_Reprogramado_DT": "Fecha Reprogramado",
+                "STG_Entregado_DT": "Fecha Entregado",
+                "CREATED_DT": "Fecha Creacion",
+                "BO_DT": "Fecha Back Office",
+                "ACT_DT": "Fecha Activacion",
+            }
+            
+            show = detail[keep].copy().rename(columns=rename_map)
+            if "Fecha Creacion" in show.columns:
+                show = show.sort_values("Fecha Creacion", ascending=False)
 
             st.subheader("📄 Detalle completo")
             st.dataframe(show, use_container_width=True)
