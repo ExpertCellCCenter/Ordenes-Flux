@@ -1,5 +1,5 @@
 # app.py ✅ BOSS-READY + INYECCIÓN DIRECTA DE RASTREO
-# ✅ Fix definitivo: Python ahora extrae "En preparacion" y "En entrega" directamente 
+# ✅ Fix definitivo: Python ahora extrae "En preparacion" y "En entrega" directamente
 #    de la tabla dbo.pedido_telefonia_rastreo y hace un JOIN (merge) automático.
 
 import streamlit as st
@@ -294,7 +294,7 @@ def _extract_datetime_text(series: pd.Series) -> pd.Series:
         "1900-01-01 00:00:00": "", "1900-01-01 00:00:00.000": "", "1900-01-01": "", "1900-01-01T00:00:00": ""
     })
     s = s.where(s != "", np.nan)
-    
+
     if s.notna().any():
         pat = r"(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?)|(\d{4}[/-]\d{1,2}[/-]\d{1,2}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?)"
         ext = s.astype(str).str.extract(pat)
@@ -308,7 +308,7 @@ def parse_dt_both(series: pd.Series) -> tuple:
     s2 = _extract_datetime_text(series)
     dt_df = pd.to_datetime(s2, errors="coerce", dayfirst=True)
     dt_mf = pd.to_datetime(s2, errors="coerce", dayfirst=False)
-    
+
     dt_df = dt_df.where(dt_df.notna(), dt_native)
     dt_mf = dt_mf.where(dt_mf.notna(), dt_native)
     return sanitize_dates(dt_df), sanitize_dates(dt_mf)
@@ -316,6 +316,91 @@ def parse_dt_both(series: pd.Series) -> tuple:
 def choose_dt_rowwise(dt_df: pd.Series, dt_mf: pd.Series, created: pd.Series | None=None, bo: pd.Series | None=None) -> pd.Series:
     out = dt_df.copy()
     out = out.where(~(dt_df.isna() & dt_mf.notna()), dt_mf)
+    return sanitize_dates(out)
+
+# ✅ FIX NUEVO (mínimo): selector robusto para ACTIVACIÓN usando BO como referencia + anti-futuro
+def choose_dt_activation_rowwise(dt_df: pd.Series, dt_mf: pd.Series, bo: pd.Series | None = None) -> pd.Series:
+    """
+    Selección robusta para ACTIVACIÓN:
+    - Descarta fechas en el futuro (tolerancia 1 día)
+    - Descarta fechas < BO (si BO existe)
+    - Si ambas (DF/MF) son válidas, elige la más cercana a BO
+    """
+    now_ts = pd.Timestamp(datetime.now())
+    max_ts = now_ts + pd.Timedelta(days=1)  # tolerancia pequeña por TZ / retrasos
+
+    out = dt_df.copy()
+    out = out.where(~(dt_df.isna() & dt_mf.notna()), dt_mf)
+
+    valid_df = dt_df.notna() & (dt_df <= max_ts)
+    valid_mf = dt_mf.notna() & (dt_mf <= max_ts)
+
+    if bo is not None:
+        bo_dt = pd.to_datetime(bo, errors="coerce")
+
+        valid_df &= bo_dt.isna() | (dt_df >= bo_dt)
+        valid_mf &= bo_dt.isna() | (dt_mf >= bo_dt)
+
+        out = out.where(~(valid_mf & ~valid_df), dt_mf)
+
+        both = valid_df & valid_mf & bo_dt.notna()
+        if both.any():
+            diff_df = (dt_df - bo_dt).abs()
+            diff_mf = (dt_mf - bo_dt).abs()
+            out = out.where(~(both & (diff_mf < diff_df)), dt_mf)
+    else:
+        out = out.where(~(valid_mf & ~valid_df), dt_mf)
+
+    out = out.where(out <= max_ts, pd.NaT)
+    return sanitize_dates(out)
+
+# ✅ FIX NUEVO (mínimo): selector robusto para FECHA CREACIÓN usando BO como referencia + anti-futuro
+def choose_dt_created_rowwise(
+    dt_df: pd.Series,
+    dt_mf: pd.Series,
+    bo: pd.Series | None = None,
+    window_start: date | None = None,
+    window_end: date | None = None,
+) -> pd.Series:
+    """
+    Selección robusta para FECHA CREACIÓN:
+    - Descarta fechas en el futuro (tolerancia 1 día)
+    - Si BO existe, creación debe ser <= BO
+    - Si ambas (DF/MF) son válidas, elige la más cercana a BO (la mayor pero <= BO)
+    - Si no hay BO, usa ventana para preferir el parse dentro del periodo
+    """
+    now_ts = pd.Timestamp(datetime.now())
+    max_ts = now_ts + pd.Timedelta(days=1)
+
+    out = dt_df.copy()
+    out = out.where(~(dt_df.isna() & dt_mf.notna()), dt_mf)
+
+    valid_df = dt_df.notna() & (dt_df <= max_ts)
+    valid_mf = dt_mf.notna() & (dt_mf <= max_ts)
+
+    if bo is not None:
+        bo_dt = pd.to_datetime(bo, errors="coerce")
+        valid_df &= bo_dt.isna() | (dt_df <= bo_dt)
+        valid_mf &= bo_dt.isna() | (dt_mf <= bo_dt)
+
+        out = out.where(~(valid_mf & ~valid_df), dt_mf)
+
+        both = valid_df & valid_mf & bo_dt.notna()
+        if both.any():
+            # elige la mayor (más cercana a BO) pero <= BO
+            out = out.where(~(both & (dt_mf > dt_df)), dt_mf)
+
+    else:
+        if window_start is not None and window_end is not None:
+            w0 = pd.Timestamp(window_start)
+            w1 = pd.Timestamp(window_end) + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1)
+            in_df = dt_df.between(w0, w1)
+            in_mf = dt_mf.between(w0, w1)
+            out = out.where(~(in_mf & ~in_df), dt_mf)
+
+        out = out.where(~(valid_mf & ~valid_df), dt_mf)
+
+    out = out.where(out <= max_ts, pd.NaT)
     return sanitize_dates(out)
 
 def parse_backoffice_datetime(series: pd.Series, window_start: date | None = None, window_end: date | None = None) -> pd.Series:
@@ -367,7 +452,43 @@ def pick_activation_dt(df: pd.DataFrame) -> tuple:
         if colname not in df.columns:
             return None
         dt_df, dt_mf = parse_dt_both(df[colname])
-        chosen = choose_dt_rowwise(dt_df, dt_mf, created=created, bo=bo)
+        chosen = choose_dt_activation_rowwise(dt_df, dt_mf, bo=bo)  # ✅ CAMBIO MÍNIMO AQUÍ
+        return chosen if chosen.notna().any() else None
+
+    for key in ["fecha activacion", "fecha de activacion", "fecha activación"]:
+        col = cols_norm.get(key)
+        if col:
+            chosen = _try_col(col)
+            if chosen is not None:
+                return chosen, col
+
+    for key in ["fecha venta", "fecha de venta", "fecha_venta"]:
+        col = cols_norm.get(key)
+        if col:
+            chosen = _try_col(col)
+            if chosen is not None:
+                return chosen, col
+
+    col = cols_norm.get("venta")
+    if col:
+        chosen = _try_col(col)
+        if chosen is not None:
+            return chosen, col
+
+    return pd.Series(pd.NaT, index=df.index), None
+
+def pick_activation_dt(df: pd.DataFrame) -> tuple:
+    if df is None or df.empty:
+        return pd.Series(pd.NaT, index=df.index), None
+
+    cols_norm = {_norm_col(c): c for c in df.columns}
+    bo = df["BO_DT"] if "BO_DT" in df.columns else None
+
+    def _try_col(colname: str):
+        if colname not in df.columns:
+            return None
+        dt_df, dt_mf = parse_dt_both(df[colname])
+        chosen = choose_dt_activation_rowwise(dt_df, dt_mf, bo=bo)
         return chosen if chosen.notna().any() else None
 
     for key in ["fecha activacion", "fecha de activacion", "fecha activación"]:
@@ -415,7 +536,7 @@ def pick_stage_dt_from_columns(df: pd.DataFrame, stage: str, created: pd.Series,
             continue
         if stage_n == "entregado" and nc == "en entrega":
             continue
-            
+
         if any(k in nc for k in keys):
             cols.append(c)
 
@@ -569,24 +690,21 @@ def transform_consulta1(df_raw: pd.DataFrame, hoja: pd.DataFrame, rastreo_extra:
 
     # ✅ FIX NUEVO: Pegamos las columnas faltantes directamente desde la bitácora
     if rastreo_extra is not None and not rastreo_extra.empty:
-        # Voltea la tabla para convertir "accion" en nuevas columnas de fechas
         piv = rastreo_extra.pivot_table(index="Programacion", columns="accion", values="fecha_rastreo", aggfunc="max").reset_index()
-        
-        # Las nombramos para que el scanner automático las agarre perfecto
+
         rename_map = {
             "En preparacion": "Fecha En preparacion Exacta",
             "En entrega": "Fecha En entrega Exacta",
             "Reprogramado": "Fecha Reprogramado Exacta"
         }
         piv.rename(columns=rename_map, inplace=True)
-        
+
         if "Programacion" in df.columns:
             df = df.merge(piv, on="Programacion", how="left")
 
-    # Limpieza estándar
     clean_cols = [
         "Centro", "Estatus", "Back Office", "Vendedor", "Cliente",
-        "Nuevo", "Solicitado", "En preparacion", "En preparación", 
+        "Nuevo", "Solicitado", "En preparacion", "En preparación",
         "En entrega", "Reprogramado", "Entregado", "Fecha creacion", "Venta"
     ]
     for col in df.columns:
@@ -622,6 +740,7 @@ def transform_consulta1(df_raw: pd.DataFrame, hoja: pd.DataFrame, rastreo_extra:
     df.drop(columns=["Nombre Completo"], inplace=True, errors="ignore")
     df["Jefe directo"] = df["Jefe directo"].fillna("").astype(str).str.strip().replace("", "ENCUBADORA")
 
+    # (se mantiene) parse previo de Fecha creacion, build_view decide DF/MF final
     if "Fecha creacion" in df.columns:
         df["Fecha creacion"] = pd.to_datetime(df["Fecha creacion"], errors="coerce", dayfirst=True)
         df["Fecha creacion"] = sanitize_dates(df["Fecha creacion"])
@@ -640,7 +759,7 @@ def transform_consulta1(df_raw: pd.DataFrame, hoja: pd.DataFrame, rastreo_extra:
 
         df["BO_DT_DF"] = pd.to_datetime(s2, errors="coerce", dayfirst=True)
         df["BO_DT_DF"] = sanitize_dates(df["BO_DT_DF"])
-        
+
         df["BO_DT_MF"] = pd.to_datetime(s2, errors="coerce", dayfirst=False)
         df["BO_DT_MF"] = sanitize_dates(df["BO_DT_MF"])
 
@@ -657,11 +776,16 @@ def build_view(df_ctx: pd.DataFrame, fecha_ini: date, fecha_fin: date):
     }
     df = df_ctx.copy()
 
-    df["CREATED_DT"] = pd.to_datetime(df["Fecha creacion"], errors="coerce", dayfirst=True) if "Fecha creacion" in df.columns else pd.NaT
-    df["CREATED_DT"] = sanitize_dates(df["CREATED_DT"])
-    
+    # ✅ BO primero (para poder decidir CREATED_DT contra BO)
     df["BO_DT"] = choose_backoffice_dt(df, window_start=fecha_ini, window_end=fecha_fin) if "Back Office" in df.columns else pd.NaT
-    
+
+    # ✅ CREATED_DT robusto (DF/MF) usando BO como referencia
+    if "Fecha creacion" in df.columns:
+        c_df, c_mf = parse_dt_both(df["Fecha creacion"])
+        df["CREATED_DT"] = choose_dt_created_rowwise(c_df, c_mf, bo=df["BO_DT"], window_start=fecha_ini, window_end=fecha_fin)
+    else:
+        df["CREATED_DT"] = pd.NaT
+
     meta["stage_sources"]["Nuevo"] = "Fecha creacion" if "Fecha creacion" in df.columns else None
     meta["stage_sources"]["Back Office"] = "Back Office" if "Back Office" in df.columns else None
 
@@ -681,6 +805,11 @@ def build_view(df_ctx: pd.DataFrame, fecha_ini: date, fecha_fin: date):
 
     act_dt, act_col = pick_activation_dt(df)
     df["ACT_DT"] = sanitize_dates(act_dt)
+
+    # ✅ Guardrail mínimo: una activación no puede estar en el futuro
+    _now = pd.Timestamp(datetime.now()) + pd.Timedelta(days=1)
+    df.loc[df["ACT_DT"] > _now, "ACT_DT"] = pd.NaT
+
     meta["activation_col"] = act_col
     meta["has_activation_dt"] = bool(df["ACT_DT"].notna().any())
 
@@ -1183,7 +1312,15 @@ def main():
             view, meta = build_view(df, fecha_ini, fecha_fin)
 
             detail = view.copy()
-            detail["Tiempo Nuevo→BO (HH:MM)"] = detail["TD_Creacion_a_BO"].apply(fmt_timedelta)
+
+            # ✅ Tiempo Nuevo→BO: si ya tiene BO => TD_Creacion_a_BO
+            # ✅ si sigue en Nuevo y no tiene BO => En proceso desde Fecha Creación
+            detail["Tiempo Nuevo→BO (HH:MM)"] = [
+                (fmt_timedelta(done) if (done is not None and pd.notna(done))
+                 else (f"En proceso · {fmt_timedelta(age)}" if (str(stg) == "Nuevo" and age is not None and pd.notna(age)) else "—"))
+                for done, age, stg in zip(detail["TD_Creacion_a_BO"], detail["TD_Age_Desde_Creacion"], detail["Estatus"])
+            ]
+
             detail["Tiempo BO→Act (HH:MM)"] = [
                 fmt_done_or_in_process(done, age)
                 for done, age in zip(detail["TD_BO_a_Act"], detail["TD_Age_Desde_BO"])
@@ -1222,7 +1359,7 @@ def main():
                 "BO_DT": "Fecha Back Office",
                 "ACT_DT": "Fecha Activacion",
             }
-            
+
             show = detail[keep].copy().rename(columns=rename_map)
             if "Fecha Creacion" in show.columns:
                 show = show.sort_values("Fecha Creacion", ascending=False)
