@@ -38,81 +38,106 @@ st.set_page_config(
 )
 
 # -------------------------------------------------
-# STYLES
+# THEME (READ ONLY — we do NOT force anything)  ✅ same as your other dashboard
+# -------------------------------------------------
+try:
+    theme_base = st.get_option("theme.base") or "light"  # "light" | "dark"
+except Exception:
+    theme_base = "light"
+
+IS_DARK = str(theme_base).lower() == "dark"
+PLOTLY_TEMPLATE = "plotly_dark" if IS_DARK else "plotly_white"
+
+# Readability helpers (labels + grids)
+TEXT_LABEL_COLOR = "white" if IS_DARK else "black"
+GRID_COLOR = "rgba(127,127,127,0.22)" if IS_DARK else "rgba(127,127,127,0.18)"
+
+# -------------------------------------------------
+# NEUTRAL, THEME-FRIENDLY CSS (no forced colors) ✅ copied approach from your other dashboard
 # -------------------------------------------------
 st.markdown(
     """
 <style>
-html, body, [class*="css"] { font-family: "Segoe UI", system-ui, sans-serif; }
-.block-container { padding-top: 1.1rem; padding-bottom: 2rem; }
-h1 { font-weight: 900 !important; letter-spacing: -0.3px; }
-h2, h3 { font-weight: 800 !important; }
+header[data-testid="stHeader"]{ background: rgba(0,0,0,0) !important; }
+header[data-testid="stHeader"] [data-testid="stToolbar"]{ background: rgba(0,0,0,0) !important; }
+header[data-testid="stHeader"] button,
+header[data-testid="stHeader"] svg{
+  color: var(--text-color) !important;
+  fill: var(--text-color) !important;
+}
 
-/* --- Flow pills --- */
-.flow-wrap {
+.stApp{
+  background-color: var(--background-color) !important;
+  background-image:
+    radial-gradient(circle at 1px 1px, rgba(127,127,127,0.14) 1px, transparent 0) !important;
+  background-size: 18px 18px !important;
+  color: var(--text-color) !important;
+}
+.block-container{ padding-top: 1.2rem; padding-bottom: 2rem; }
+
+section[data-testid="stSidebar"]{
+  background: var(--secondary-background-color) !important;
+  border-right: 1px solid rgba(127,127,127,0.25) !important;
+}
+section[data-testid="stSidebar"] *{ color: var(--text-color) !important; }
+
+section[data-testid="stSidebar"] input,
+section[data-testid="stSidebar"] textarea{
+  background: var(--background-color) !important;
+  border: 1px solid rgba(127,127,127,0.28) !important;
+  color: var(--text-color) !important;
+  border-radius: 10px !important;
+}
+section[data-testid="stSidebar"] [data-baseweb="select"] > div{
+  background: var(--background-color) !important;
+  border: 1px solid rgba(127,127,127,0.28) !important;
+  border-radius: 10px !important;
+}
+section[data-testid="stSidebar"] [data-baseweb="tag"]{
+  background: rgba(127,127,127,0.25) !important;
+  color: var(--text-color) !important;
+  border-radius: 999px !important;
+  font-weight: 800 !important;
+}
+
+/* ✅ KPI + pills styled theme-friendly (no forced dark/light colors) */
+.flow-wrap{
   display:flex;
   gap: 10px;
   flex-wrap: wrap;
   align-items: center;
   padding: 10px 8px;
   border-radius: 16px;
-  border: 1px solid rgba(148,163,184,0.35);
-  background: rgba(148,163,184,0.06);
+  border: 1px solid rgba(127,127,127,0.25);
+  background: var(--secondary-background-color) !important;
 }
 .flow-pill{
   min-width: 120px;
   text-align:center;
   padding: 10px 14px;
   border-radius: 12px;
-  background: rgba(148,163,184,0.45);
-  color: white;
-  font-weight: 800;
+  background: rgba(127,127,127,0.22) !important;
+  color: var(--text-color) !important;
+  font-weight: 900;
   line-height: 1.05;
-  box-shadow: 0 8px 16px rgba(15,23,42,0.10);
 }
-.flow-pill small{
-  display:block;
-  font-weight: 800;
-  opacity: 0.95;
-}
-@media (prefers-color-scheme: dark) {
-  .flow-wrap { background: rgba(15,23,42,0.55); border-color: rgba(148,163,184,0.45); }
-  .flow-pill { background: rgba(148,163,184,0.35); box-shadow: 0 10px 22px rgba(0,0,0,0.45); }
-}
+.flow-pill small{ display:block; font-weight: 900; opacity: 0.78; }
 
-/* KPI cards */
 .kpi-row { display:flex; gap:12px; flex-wrap:wrap; margin-top: 10px; }
-.kpi {
-  background: rgba(255,255,255,0.92);
-  border: 1px solid rgba(15,23,42,0.10);
-  box-shadow: 0 10px 26px rgba(15,23,42,0.10);
-  border-radius: 16px;
+.kpi{
+  background: var(--secondary-background-color) !important;
+  border-radius: 14px;
   padding: 14px 16px;
+  border: 1px solid rgba(127,127,127,0.22);
+  box-shadow: 0 1px 0 rgba(0,0,0,0.10);
   min-width: 220px;
   flex: 1;
 }
-.kpi .label { font-size: 0.92rem; opacity:0.85; }
-.kpi .value { font-size: 1.7rem; font-weight: 900; margin-top:6px; }
-.kpi .sub { font-size: 0.85rem; opacity:0.75; margin-top:4px; }
+.kpi .label{ font-size:0.92rem; opacity:0.78; font-weight:900; }
+.kpi .value{ font-size:1.9rem; font-weight:950; margin-top:6px; line-height:1; }
+.kpi .sub{ font-size:0.9rem; opacity:0.70; margin-top:6px; }
 
-@media (prefers-color-scheme: dark) {
-  .kpi{
-    background: rgba(15,23,42,0.92);
-    border-color: rgba(148,163,184,0.55);
-    box-shadow: 0 12px 34px rgba(0,0,0,0.55);
-  }
-}
-
-/* Download button */
-div[data-testid="stDownloadButton"] > button {
-    border-radius: 999px;
-    background: linear-gradient(90deg,#0ea5e9,#6366f1);
-    color: #f9fafb;
-    border: none;
-    padding: 0.45rem 1.2rem;
-    font-weight: 800;
-}
-div[data-testid="stDownloadButton"] > button:hover { filter: brightness(1.05); }
+div[data-testid="stPlotlyChart"] > div{ border-radius: 16px; }
 
 /* Plotly transparent */
 .js-plotly-plot .plotly .main-svg { background-color: rgba(0,0,0,0) !important; }
@@ -253,9 +278,98 @@ def render_flow_pills(counts: dict):
         v = counts.get(k, 0)
         html += f'<div class="flow-pill">{k}<small>({int(v)})</small></div>'
         if k != FLOW_ORDER[-1]:
-            html += '<div style="color: #94a3b8; font-weight: bold; font-size: 1.2rem;">➔</div>'
+            html += '<div style="color: rgba(127,127,127,0.75); font-weight: 900; font-size: 1.2rem;">➔</div>'
     html += "</div>"
     st.markdown(html, unsafe_allow_html=True)
+
+# -------------------------------------------------
+# PLOTLY THEME HELPERS (transparent + readable labels)
+# -------------------------------------------------
+def add_bar_value_labels(fig: go.Figure) -> go.Figure:
+    """
+    Adds value labels to BAR traces ONLY when they don't already have text/texttemplate.
+    """
+    try:
+        for tr in getattr(fig, "data", []) or []:
+            if getattr(tr, "type", "") != "bar":
+                continue
+
+            has_text = tr.text is not None and np.size(tr.text) > 0
+            has_template = bool(getattr(tr, "texttemplate", "") or "")
+            if has_text or has_template:
+                continue
+
+            orient = getattr(tr, "orientation", None) or "v"
+            if orient == "h":
+                tr.update(texttemplate="%{x:,.0f}", textposition="outside", cliponaxis=False)
+            else:
+                tr.update(texttemplate="%{y:,.0f}", textposition="outside", cliponaxis=False)
+
+        fig.update_layout(uniformtext_minsize=10, uniformtext_mode="hide")
+    except Exception:
+        pass
+    return fig
+
+
+def _ensure_text_visible(fig: go.Figure) -> go.Figure:
+    """
+    Ensures text/labels are readable with the current theme (dark/light),
+    without changing backgrounds.
+    """
+    try:
+        for tr in getattr(fig, "data", []) or []:
+            has_text = getattr(tr, "text", None) is not None
+            has_template = bool(getattr(tr, "texttemplate", "") or "")
+            if has_text or has_template:
+                tf = getattr(tr, "textfont", None)
+                tf_color = None
+                try:
+                    tf_color = getattr(tf, "color", None)
+                except Exception:
+                    tf_color = None
+                if not tf_color:
+                    tr.update(textfont=dict(color=TEXT_LABEL_COLOR))
+
+            if hasattr(tr, "insidetextfont"):
+                itf = getattr(tr, "insidetextfont", None)
+                itf_color = None
+                try:
+                    itf_color = getattr(itf, "color", None)
+                except Exception:
+                    itf_color = None
+                if not itf_color:
+                    tr.update(insidetextfont=dict(color=TEXT_LABEL_COLOR))
+
+            if hasattr(tr, "outsidetextfont"):
+                otf = getattr(tr, "outsidetextfont", None)
+                otf_color = None
+                try:
+                    otf_color = getattr(otf, "color", None)
+                except Exception:
+                    otf_color = None
+                if not otf_color:
+                    tr.update(outsidetextfont=dict(color=TEXT_LABEL_COLOR))
+
+        try:
+            fig.update_coloraxes(colorbar_tickfont_color=TEXT_LABEL_COLOR, colorbar_title_font_color=TEXT_LABEL_COLOR)
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return fig
+
+
+def apply_plotly_theme(fig: go.Figure) -> go.Figure:
+    fig.update_layout(
+        template=PLOTLY_TEMPLATE,
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        margin=dict(l=20, r=20, t=60, b=20),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+    )
+    add_bar_value_labels(fig)
+    _ensure_text_visible(fig)
+    return fig
 
 # -------------------------------------------------
 # TEXT NORMALIZATION & SANITIZATION (ANTI-1900)
@@ -325,27 +439,28 @@ def parse_dt_both(series: pd.Series) -> tuple:
     dt_mf = dt_mf.where(dt_mf.notna(), dt_native)
     return sanitize_dates(dt_df), sanitize_dates(dt_mf)
 
+
 def choose_dt_rowwise(dt_df: pd.Series, dt_mf: pd.Series, created: pd.Series | None = None, bo: pd.Series | None = None) -> pd.Series:
     now_ts = pd.Timestamp(datetime.now())
     max_ts = now_ts + pd.Timedelta(days=1)
 
     out = dt_df.copy()
-    
+
     valid_df = dt_df.notna() & (dt_df <= max_ts)
     valid_mf = dt_mf.notna() & (dt_mf <= max_ts)
 
     out = out.where(~(valid_mf & ~valid_df), dt_mf)
 
     base_dt = bo if bo is not None and bo.notna().any() else created
-    
+
     if base_dt is not None:
         c_dt = pd.to_datetime(base_dt, errors="coerce")
-        
+
         valid_df_c = valid_df & (c_dt.isna() | (dt_df >= c_dt))
         valid_mf_c = valid_mf & (c_dt.isna() | (dt_mf >= c_dt))
-        
+
         out = out.where(~(valid_mf_c & ~valid_df_c), dt_mf)
-        
+
         both = valid_df_c & valid_mf_c & c_dt.notna()
         if both.any():
             diff_df = (dt_df - c_dt).abs()
@@ -835,7 +950,7 @@ def build_view(df_ctx: pd.DataFrame, fecha_ini: date, fecha_fin: date):
     df["H_Creacion_a_Act"] = df["TD_Creacion_a_Act"].apply(td_to_hours)
     df["H_Age_Desde_Creacion"] = df["TD_Age_Desde_Creacion"].apply(td_to_hours)
     df["H_Age_Desde_BO"] = df["TD_Age_Desde_BO"].apply(td_to_hours)
-    
+
     df["H_Nuevo_a_BO"] = df["TD_Creacion_a_BO"].apply(td_to_hours)
     df["H_BO_a_Solicitado"] = df["TD_BO_a_Solicitado"].apply(td_to_hours)
     df["H_Solicitado_a_Prep"] = df["TD_Solicitado_a_Preparacion"].apply(td_to_hours)
@@ -869,10 +984,10 @@ def _bucket_hours(h: float) -> str:
     return ">3d"
 
 
-_BUCKET_ORDER = ["≤2h", "2–6h", "6–12h", "12–24h", "1–2d", "2–3d", ">3d", "Sin dato"]
+_BUCKET_ORDER_ALL = ["≤2h", "2–6h", "6–12h", "12–24h", "1–2d", "2–3d", ">3d", "Sin dato"]
 
 
-def make_time_buckets_chart(view: pd.DataFrame) -> go.Figure | None:
+def make_time_buckets_chart(view: pd.DataFrame, include_sin_dato: bool = False) -> go.Figure | None:
     if view.empty:
         return None
 
@@ -906,7 +1021,12 @@ def make_time_buckets_chart(view: pd.DataFrame) -> go.Figure | None:
         return None
 
     dfb = pd.DataFrame(rows)
-    dfb["Rango"] = pd.Categorical(dfb["Rango"], categories=_BUCKET_ORDER, ordered=True)
+
+    if not include_sin_dato:
+        dfb = dfb[dfb["Rango"] != "Sin dato"].copy()
+
+    bucket_order = _BUCKET_ORDER_ALL if include_sin_dato else [x for x in _BUCKET_ORDER_ALL if x != "Sin dato"]
+    dfb["Rango"] = pd.Categorical(dfb["Rango"], categories=bucket_order, ordered=True)
     dfb = dfb.sort_values(["Rango", "Tramo"])
 
     fig = px.bar(
@@ -915,25 +1035,35 @@ def make_time_buckets_chart(view: pd.DataFrame) -> go.Figure | None:
         y="Órdenes",
         color="Tramo",
         barmode="group",
-        text_auto=True, 
+        text_auto=True,
         title="Distribución por rangos de tiempo (volumen general)",
-        template="plotly_white",
-        color_discrete_sequence=["#0ea5e9", "#6366f1", "#10b981"]
+        template=PLOTLY_TEMPLATE,
+        color_discrete_sequence=["#0ea5e9", "#6366f1", "#10b981"],
     )
-    
-    fig.update_traces(textfont_size=13, textangle=0, textposition="outside", cliponaxis=False)
-    fig.update_layout(
-        margin=dict(l=40, r=20, t=70, b=20), 
-        legend_title_text="Tramo",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+
+    fig.update_traces(
+        textfont_size=13,
+        textangle=0,
+        textposition="outside",
+        cliponaxis=False,
+        textfont_color="white",
     )
-    fig.update_yaxes(title="Cantidad de Órdenes", showgrid=True, gridcolor="#f1f5f9")
+    fig.update_yaxes(title="Cantidad de Órdenes", showgrid=True, gridcolor=GRID_COLOR)
     fig.update_xaxes(title="Rango de Tiempo", showgrid=False)
-    
+
+    apply_plotly_theme(fig)
+        # ✅ FORCE: bar value labels ALWAYS white
+    for tr in fig.data:
+        if getattr(tr, "type", "") == "bar":
+            tr.update(
+                textfont=dict(color="white"),
+                outsidetextfont=dict(color="white"),
+                insidetextfont=dict(color="white"),
+            )
     return fig
 
 
-def make_bottleneck_matrix(view: pd.DataFrame) -> go.Figure | None:
+def make_bottleneck_matrix(view: pd.DataFrame, include_sin_dato: bool = False) -> go.Figure | None:
     if view.empty:
         return None
 
@@ -942,7 +1072,7 @@ def make_bottleneck_matrix(view: pd.DataFrame) -> go.Figure | None:
         "2. BO→Solicit": "H_BO_a_Solicitado",
         "3. Solicit→Prep": "H_Solicitado_a_Prep",
         "4. Prep→Entrega": "H_Prep_a_Entrega",
-        "5. Entrega→Fin": "H_Entrega_a_Entregado"
+        "5. Entrega→Fin": "H_Entrega_a_Entregado",
     }
 
     rows = []
@@ -958,18 +1088,23 @@ def make_bottleneck_matrix(view: pd.DataFrame) -> go.Figure | None:
         return None
 
     df_b = pd.DataFrame(rows)
-    df_b["Rango"] = pd.Categorical(df_b["Rango"], categories=_BUCKET_ORDER, ordered=True)
+
+    if not include_sin_dato:
+        df_b = df_b[df_b["Rango"] != "Sin dato"].copy()
+
+    bucket_order = _BUCKET_ORDER_ALL if include_sin_dato else [x for x in _BUCKET_ORDER_ALL if x != "Sin dato"]
+    df_b["Rango"] = pd.Categorical(df_b["Rango"], categories=bucket_order, ordered=True)
     df_b = df_b.sort_values(["Etapa", "Rango"])
 
     color_map = {
-        "≤2h": "#10b981",     
-        "2–6h": "#34d399",    
-        "6–12h": "#fcd34d",   
-        "12–24h": "#fbbf24",  
-        "1–2d": "#f97316",    
-        "2–3d": "#ef4444",    
-        ">3d": "#991b1b",     
-        "Sin dato": "#e2e8f0"
+        "≤2h": "#10b981",
+        "2–6h": "#34d399",
+        "6–12h": "#fcd34d",
+        "12–24h": "#fbbf24",
+        "1–2d": "#f97316",
+        "2–3d": "#ef4444",
+        ">3d": "#991b1b",
+        "Sin dato": "#94a3b8",
     }
 
     fig = px.bar(
@@ -979,17 +1114,16 @@ def make_bottleneck_matrix(view: pd.DataFrame) -> go.Figure | None:
         color="Rango",
         title="🚦 Salud del Proceso: ¿Dónde se atoran las órdenes? (% por etapa)",
         color_discrete_map=color_map,
-        text_auto=".1f" 
+        text_auto=".1f",
+        template=PLOTLY_TEMPLATE,
     )
 
-    fig.update_traces(textfont_size=12, textfont_color="white")
-    fig.update_layout(
-        template="plotly_white",
-        margin=dict(l=40, r=20, t=70, b=20),
-        yaxis_title="% de Órdenes",
-        xaxis_title="Transición de Etapa",
-        legend_title="Tiempo que tardó"
-    )
+    fig.update_layout(barmode="stack")
+    fig.update_yaxes(range=[0, 100], title="% de Órdenes")
+    fig.update_xaxes(title="Transición de Etapa")
+    fig.update_traces(textfont_size=12, textfont_color="white", textposition="outside")
+
+    apply_plotly_theme(fig)
     return fig
 
 
@@ -1026,48 +1160,53 @@ def make_top_slowest_bar(view: pd.DataFrame, n: int = 20) -> go.Figure | None:
         "H_BO_a_Solicitado": "2. BO→Solicit",
         "H_Solicitado_a_Prep": "3. Solicit→Prep",
         "H_Prep_a_Entrega": "4. Prep→Entrega",
-        "H_Entrega_a_Entregado": "5. Entrega→Fin"
+        "H_Entrega_a_Entregado": "5. Entrega→Fin",
     }
-    
+
     melted = []
     for _, row in d.iterrows():
         order_id = row[id_col]
         for col, label in stage_cols.items():
             if col in row and pd.notna(row[col]):
                 val = float(row[col])
-                if val > 0: 
+                if val > 0:
                     melted.append({
                         "Orden": order_id,
                         "Etapa": label,
                         "Horas": val,
-                        "Total_Horas": row["_h_total"] 
+                        "Total_Horas": row["_h_total"],
                     })
-                    
+
     df_melt = pd.DataFrame(melted)
     if df_melt.empty:
         return None
+
+    stage_color_map = {
+        "1. Nuevo→BO": "#06b6d4",
+        "2. BO→Solicit": "#3b82f6",
+        "3. Solicit→Prep": "#a78bfa",
+        "4. Prep→Entrega": "#f59e0b",
+        "5. Entrega→Fin": "#22c55e",
+    }
 
     fig = px.bar(
         df_melt,
         x="Horas",
         y="Orden",
         color="Etapa",
+        color_discrete_map=stage_color_map,
         orientation="h",
         title=f"🚨 Radiografía: Top {len(d)} Órdenes Más Lentas (Desglose por Etapa)",
-        template="plotly_white",
+        template=PLOTLY_TEMPLATE,
         text_auto=".1f",
-        color_discrete_sequence=px.colors.qualitative.Pastel
     )
-    
-    fig.update_traces(textfont_size=11, textposition="inside")
-    fig.update_layout(
-        margin=dict(l=40, r=40, t=70, b=20), 
-        barmode='stack',
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-    )
-    fig.update_xaxes(title="Horas Acumuladas (Creación → Entregado)", showgrid=True, gridcolor="#f1f5f9")
+
+    fig.update_traces(textfont_size=11, textposition="inside", textfont_color=TEXT_LABEL_COLOR)
+    fig.update_layout(barmode="stack")
+    fig.update_xaxes(title="Horas Acumuladas (Creación → Entregado)", showgrid=True, gridcolor=GRID_COLOR)
     fig.update_yaxes(title="ID de Orden")
-    
+
+    apply_plotly_theme(fig)
     return fig
 
 
@@ -1105,6 +1244,7 @@ def make_scatter_orders(view: pd.DataFrame, color_by: str | None = None) -> go.F
             y="_h_total",
             title="Cada orden: Fecha Entregado vs Horas Totales (Creación→Entregado)",
             hover_data=hover,
+            template=PLOTLY_TEMPLATE,
         )
     else:
         fig = px.scatter(
@@ -1114,18 +1254,16 @@ def make_scatter_orders(view: pd.DataFrame, color_by: str | None = None) -> go.F
             color=color_by,
             title=f"Cada orden: Fecha Entregado vs Horas Totales (color por {color_by})",
             hover_data=hover,
+            template=PLOTLY_TEMPLATE,
         )
 
     fig.update_traces(
-        marker=dict(size=9, opacity=0.6, line=dict(width=1, color='rgba(0,0,0,0.2)'))
+        marker=dict(size=9, opacity=0.6, line=dict(width=1, color=('rgba(255,255,255,0.20)' if IS_DARK else 'rgba(0,0,0,0.20)')))
     )
-    fig.update_layout(
-        template="plotly_white",
-        margin=dict(l=40, r=20, t=70, b=20),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-    )
-    fig.update_xaxes(title="Fecha de Entrega", showgrid=True, gridcolor="#f1f5f9")
-    fig.update_yaxes(title="Horas (Creación → Entregado)", showgrid=True, gridcolor="#f1f5f9", zeroline=False)
+    fig.update_xaxes(title="Fecha de Entrega", showgrid=True, gridcolor=GRID_COLOR)
+    fig.update_yaxes(title="Horas (Creación → Entregado)", showgrid=True, gridcolor=GRID_COLOR, zeroline=False)
+
+    apply_plotly_theme(fig)
     return fig
 
 # -------------------------------------------------
@@ -1135,16 +1273,25 @@ def make_funnel(counts: dict) -> go.Figure:
     stages = ["Nuevo", "Back Office", "Solicitado", "En preparacion", "En entrega", "Reprogramado", "Entregado"]
     values = [int(counts.get(s, 0)) for s in stages]
     fig = go.Figure(go.Funnel(y=stages, x=values))
-    fig.update_layout(title="Funnel del flujo operativo (conteos por etapa)", margin=dict(l=40, r=20, t=60, b=20), template="plotly_white")
+    fig.update_layout(title="Funnel del flujo operativo (conteos por etapa)")
+    apply_plotly_theme(fig)
     return fig
 
 
 def make_flow_bar(counts: dict) -> go.Figure:
     stages = ["Nuevo", "Back Office", "Solicitado", "En preparacion", "En entrega", "Reprogramado", "Entregado"]
     values = [int(counts.get(s, 0)) for s in stages]
-    fig = px.bar(pd.DataFrame({"Etapa": stages, "Total": values}), x="Etapa", y="Total", title="Conteos por etapa", template="plotly_white", text_auto=True)
+    fig = px.bar(
+        pd.DataFrame({"Etapa": stages, "Total": values}),
+        x="Etapa",
+        y="Total",
+        title="Conteos por etapa",
+        template=PLOTLY_TEMPLATE,
+        text_auto=True,
+    )
     fig.update_xaxes(type="category")
-    fig.update_layout(margin=dict(l=40, r=20, t=60, b=20))
+    fig.update_traces(textfont_color="white")
+    apply_plotly_theme(fig)
     return fig
 
 
@@ -1155,7 +1302,8 @@ def make_backlog_over_time(view: pd.DataFrame) -> go.Figure | None:
     dfp["Fecha"] = dfp["CREATED_DT"].dt.date
     grp = dfp.groupby(["Fecha", "Estatus"]).size().reset_index(name="Total")
     grp = grp[grp["Estatus"].isin(FLOW_STAGES_NO_TOTAL)].copy()
-    fig = px.area(grp, x="Fecha", y="Total", color="Estatus", title="Backlog por etapa a través del tiempo (creación)", template="plotly_white")
+    fig = px.area(grp, x="Fecha", y="Total", color="Estatus", title="Backlog por etapa a través del tiempo (creación)", template=PLOTLY_TEMPLATE)
+    apply_plotly_theme(fig)
     return fig
 
 
@@ -1168,9 +1316,55 @@ def make_heatmap_created(view: pd.DataFrame) -> go.Figure | None:
     piv = tmp.pivot_table(index="DOW", columns="HOUR", values="Estatus", aggfunc="count", fill_value=0)
     order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
     piv = piv.reindex([d for d in order if d in piv.index])
-    fig = px.imshow(piv, title="Mapa de calor: órdenes creadas (día vs hora)", aspect="auto")
-    fig.update_layout(margin=dict(l=40, r=20, t=60, b=20))
+    fig = px.imshow(piv, title="Mapa de calor: órdenes creadas (día vs hora)", aspect="auto", template=PLOTLY_TEMPLATE)
+    apply_plotly_theme(fig)
     return fig
+
+# -------------------------------------------------
+# EXEC SUMMARY (bottlenecks) — focus block
+# -------------------------------------------------
+_STAGE_COLS = {
+    "1. Nuevo→BO": "H_Nuevo_a_BO",
+    "2. BO→Solicit": "H_BO_a_Solicitado",
+    "3. Solicit→Prep": "H_Solicitado_a_Prep",
+    "4. Prep→Entrega": "H_Prep_a_Entrega",
+    "5. Entrega→Fin": "H_Entrega_a_Entregado",
+}
+
+def build_bottleneck_summary(view: pd.DataFrame, slow_h: float = 24.0) -> pd.DataFrame:
+    rows = []
+    if view is None or view.empty:
+        return pd.DataFrame()
+
+    for etapa, col in _STAGE_COLS.items():
+        if col not in view.columns:
+            continue
+        s = pd.to_numeric(view[col], errors="coerce")
+        n_total = int(view.shape[0])
+        n_has = int(s.notna().sum())
+        n_missing = int(n_total - n_has)
+
+        if n_has > 0:
+            med = float(np.nanmedian(s))
+            p90 = float(np.nanpercentile(s.dropna().values, 90)) if n_has >= 5 else np.nan
+            pct_slow = float((s > slow_h).mean() * 100.0)
+            n_slow = int((s > slow_h).sum())
+        else:
+            med, p90, pct_slow, n_slow = np.nan, np.nan, 0.0, 0
+
+        rows.append({
+            "Etapa": etapa,
+            "Mediana (h)": med,
+            "P90 (h)": p90,
+            f"% > {int(slow_h)}h": pct_slow,
+            f"Órdenes > {int(slow_h)}h": n_slow,
+            "% Sin dato": (n_missing / max(1, n_total)) * 100.0,
+        })
+
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df = df.sort_values([f"% > {int(slow_h)}h", "Mediana (h)"], ascending=[False, False]).reset_index(drop=True)
+    return df
 
 # -------------------------------------------------
 # MAIN
@@ -1194,7 +1388,7 @@ def main():
     # ✅ NUEVO: FILTRO DE PERIODO "DUMMY-FRIENDLY"
     st.sidebar.markdown("---")
     st.sidebar.subheader("📅 Periodo de Análisis")
-    
+
     today = date.today()
     years = list(range(today.year - 2, today.year + 1))
     meses_nombres = [
@@ -1208,14 +1402,10 @@ def main():
     with c2:
         m_sel = st.selectbox("Mes", meses_nombres, index=today.month - 1)
 
-    # Convertir el nombre del mes a número (1-12)
     m_num = meses_nombres.index(m_sel) + 1
-
-    # Calcular las fechas automáticamente para la base de datos
     m0, m1 = _month_bounds(int(y_sel), m_num)
     fecha_ini = m0
-    
-    # Si seleccionan el mes y año en curso, el límite es hoy para no buscar en el futuro
+
     if int(y_sel) == today.year and m_num == today.month:
         fecha_fin = min(m1, today)
     else:
@@ -1230,13 +1420,13 @@ def main():
         rastreo_extra = load_rastreo_extra(fecha_ini, fecha_fin)
         consulta = transform_consulta1(raw, hoja, rastreo_extra)
 
-    # ✅ NUEVO: FILTROS LIMPIOS Y EN CASCADA (FUERA DEL EXPANDER)
+    # ✅ FILTROS LIMPIOS Y EN CASCADA
     st.sidebar.markdown("---")
     st.sidebar.subheader("🔎 Filtros de Operación")
-    
+
     df_filter = consulta.copy()
 
-    # 1. Filtro: Centro
+    # 1. Centro
     if "Centro Original" in df_filter.columns:
         centros = ["Todos"] + sorted([str(c) for c in df_filter["Centro Original"].dropna().unique() if str(c).strip() != ""])
         centro_sel = st.sidebar.selectbox("🏢 Centro", centros, index=0)
@@ -1245,7 +1435,7 @@ def main():
     else:
         centro_sel = "Todos"
 
-    # 2. Filtro: Supervisor (Depende del Centro seleccionado)
+    # 2. Supervisor
     if "Jefe directo" in df_filter.columns:
         supervisores = ["Todos"] + sorted([str(s) for s in df_filter["Jefe directo"].dropna().unique() if str(s).strip() != ""])
         supervisor_sel = st.sidebar.selectbox("👤 Supervisor", supervisores, index=0)
@@ -1254,7 +1444,7 @@ def main():
     else:
         supervisor_sel = "Todos"
 
-    # 3. Filtro: Ejecutivo (Depende del Centro y Supervisor seleccionados)
+    # 3. Ejecutivo
     if "Vendedor" in df_filter.columns:
         ejecutivos = ["Todos"] + sorted([str(v) for v in df_filter["Vendedor"].dropna().unique() if str(v).strip() != ""])
         ejecutivo_sel = st.sidebar.selectbox("🎧 Ejecutivo", ejecutivos, index=0)
@@ -1263,10 +1453,9 @@ def main():
     else:
         ejecutivo_sel = "Todos"
 
-    # El DataFrame final que se usa en toda la app
     df = df_filter.copy()
 
-    # ✅ OCULTO: Las alertas ahora están en un expander para no ensuciar el menú principal
+    # ✅ Alertas a expander
     st.sidebar.markdown("---")
     with st.sidebar.expander("⚙️ Configuración de Alertas (Horas)"):
         st.caption("Define el umbral para considerar una orden como 'Crítica'.")
@@ -1282,7 +1471,7 @@ def main():
     tabs = st.tabs(["Resumen Ejecutivo", "Gráficas", "Pendientes a Recuperar", "Detalle / Export"])
 
     # ============================
-    # TAB 0: RESUMEN (visual + per-order)
+    # TAB 0: RESUMEN (main purpose)
     # ============================
     with tabs[0]:
         if df.empty:
@@ -1307,25 +1496,69 @@ def main():
             st.markdown("</div>", unsafe_allow_html=True)
 
             st.markdown("---")
-            st.subheader("🎯 Tiempos del Proceso General")
+            st.subheader("🎯 Tiempos del Proceso General (ENFOQUE PRINCIPAL)")
 
-            c1, c2 = st.columns(2)
+            cT1, cT2, cT3 = st.columns([0.42, 0.33, 0.25], gap="large")
+            with cT1:
+                include_sin_dato = st.checkbox("Incluir 'Sin dato' en gráficas", value=False)
+            with cT2:
+                slow_h = st.select_slider(
+                    "Umbral para foco ejecutivo",
+                    options=[6, 12, 24, 48, 72],
+                    value=24,
+                    help="Se usa para detectar la etapa más crítica (% de órdenes que superan ese tiempo).",
+                )
+            with cT3:
+                st.caption("Tip: usa Centro/Supervisor/Ejecutivo para diagnosticar rápido.")
+
+            st.caption("🎯 Objetivo: detectar en qué etapa se **atoran** las órdenes y priorizar recuperación.")
+            sum_df = build_bottleneck_summary(view, slow_h=float(slow_h))
+
+            if not sum_df.empty:
+                worst = sum_df.iloc[0]
+                cA, cB, cC, cD = st.columns(4, gap="medium")
+                with cA:
+                    kpi_card("🚧 Cuello #1", str(worst["Etapa"]))
+                with cB:
+                    kpi_card(f"% > {int(slow_h)}h", f"{worst[f'% > {int(slow_h)}h']:.1f}%")
+                with cC:
+                    kpi_card("Mediana", f"{worst['Mediana (h)']:.1f} h")
+                with cD:
+                    kpi_card("% Sin dato", f"{worst['% Sin dato']:.1f}%")
+
+                with st.expander("📌 Ranking de etapas (acción inmediata)", expanded=True):
+                    st.dataframe(
+                        sum_df.style.format({
+                            "Mediana (h)": "{:.1f}",
+                            "P90 (h)": "{:.1f}",
+                            f"% > {int(slow_h)}h": "{:.1f}",
+                            f"Órdenes > {int(slow_h)}h": "{:,.0f}",
+                            "% Sin dato": "{:.1f}",
+                        }),
+                        use_container_width=True,
+                        hide_index=True,
+                        height=240,
+                    )
+            else:
+                st.info("No hay suficientes datos para construir el resumen ejecutivo.")
+
+            c1, c2 = st.columns(2, gap="large")
             with c1:
-                fig_buckets = make_time_buckets_chart(view)
+                fig_buckets = make_time_buckets_chart(view, include_sin_dato=include_sin_dato)
                 if fig_buckets is not None:
                     st.plotly_chart(fig_buckets, use_container_width=True, key="t0_buckets")
                 else:
                     st.info("No hay datos suficientes para distribución por rangos.")
 
             with c2:
-                fig_health = make_bottleneck_matrix(view)
+                fig_health = make_bottleneck_matrix(view, include_sin_dato=include_sin_dato)
                 if fig_health is not None:
                     st.plotly_chart(fig_health, use_container_width=True, key="t0_health")
                 else:
                     st.info("No hay datos suficientes para la matriz de cuellos de botella.")
 
             st.markdown("---")
-            st.subheader("🕵️ Análisis de Lentas y Cuellos de Botella")
+            st.subheader("🕵️ Análisis de Lentas y Cuellos de Botella (Top)")
 
             fig_top = make_top_slowest_bar(view, n=20)
             if fig_top is not None:
@@ -1349,97 +1582,6 @@ def main():
             else:
                 st.info("No hay suficientes entregadas con fecha entregado para el scatter.")
 
-            st.markdown("---")
-            st.subheader("📄 Tiempos por orden (Nuevo → BO → Entregado)")
-            st.caption("Aquí ves **cada orden** y cuánto tardó en cada tramo (o 'En proceso').")
-
-            show_mode = st.selectbox("Mostrar", ["Solo Entregadas", "Solo Pendientes", "Todas"], index=0)
-            sort_mode = st.selectbox(
-                "Ordenar por",
-                ["Más recientes", "Más lentas Nuevo→BO", "Más lentas BO→Entregado", "Más lentas Total a Entregado"],
-                index=0,
-            )
-            topn = st.slider("Cantidad a mostrar", 20, 300, 80, 10)
-
-            tt = view.copy()
-
-            tt["Tiempo Nuevo→BO"] = [
-                (fmt_timedelta(done) if (done is not None and pd.notna(done))
-                 else (f"En proceso · {fmt_timedelta(age)}" if (str(stg) == "Nuevo" and age is not None and pd.notna(age)) else "—"))
-                for done, age, stg in zip(tt["TD_Creacion_a_BO"], tt["TD_Age_Desde_Creacion"], tt["Estatus"])
-            ]
-            tt["Tiempo BO→Entregado"] = [
-                fmt_done_or_in_process(done, age)
-                for done, age in zip(tt["TD_BO_a_Entregado"], tt["TD_Age_Desde_BO"])
-            ]
-            tt["Tiempo Total a Entregado"] = [
-                fmt_done_or_in_process(done, age)
-                for done, age in zip(tt["TD_Creacion_a_Entregado"], tt["TD_Age_Desde_Creacion"])
-            ]
-
-            if show_mode == "Solo Entregadas":
-                tt = tt[tt["Estatus"].astype(str).eq("Entregado")].copy()
-            elif show_mode == "Solo Pendientes":
-                tt = tt[~tt["Estatus"].astype(str).eq("Entregado")].copy()
-
-            tt["_h_nb"] = tt["TD_Creacion_a_BO"].apply(td_to_hours)
-            tt["_h_be"] = tt["TD_BO_a_Entregado"].apply(td_to_hours)
-            tt["_h_te"] = tt["TD_Creacion_a_Entregado"].apply(td_to_hours)
-
-            if sort_mode == "Más lentas Nuevo→BO":
-                tt = tt.sort_values("_h_nb", ascending=False)
-            elif sort_mode == "Más lentas BO→Entregado":
-                tt = tt.sort_values("_h_be", ascending=False)
-            elif sort_mode == "Más lentas Total a Entregado":
-                tt = tt.sort_values("_h_te", ascending=False)
-            else:
-                if "STG_Entregado_DT" in tt.columns and tt["STG_Entregado_DT"].notna().any():
-                    tt = tt.sort_values("STG_Entregado_DT", ascending=False)
-                else:
-                    tt = tt.sort_values("CREATED_DT", ascending=False)
-
-            cols_main = [c for c in [
-                "Estatus",
-                "Centro Original", "Jefe directo", "Vendedor",
-                "Cliente", "Telefono", "Folio", "Programacion",
-                "CREATED_DT", "BO_DT", "STG_Entregado_DT",
-                "Tiempo Nuevo→BO", "Tiempo BO→Entregado", "Tiempo Total a Entregado",
-                "Venta", "ENTREGADO_SIN_VENTA",
-            ] if c in tt.columns]
-
-            show = tt[cols_main].head(int(topn)).copy().rename(
-                columns={
-                    "Vendedor": "Ejecutivo",
-                    "CREATED_DT": "Fecha Creación",
-                    "BO_DT": "Fecha Back Office",
-                    "STG_Entregado_DT": "Fecha Entregado",
-                }
-            )
-            st.dataframe(show, use_container_width=True, height=520, hide_index=True)
-
-            if entregado_sin_venta_cnt > 0:
-                st.warning(f"⚠️ Hay **{entregado_sin_venta_cnt}** órdenes en **Entregado** pero **sin Venta** (revisar / recuperar).")
-                with st.expander("Ver cuáles son Entregado sin Venta", expanded=True):
-                    df_esv = view[view["ENTREGADO_SIN_VENTA"]].copy()
-                    df_esv["Antigüedad"] = df_esv["TD_Age_Desde_Creacion"].apply(fmt_timedelta)
-
-                    cols_esv = [c for c in [
-                        "Antigüedad", "Jefe directo", "Vendedor", "Cliente", "Telefono", "Folio",
-                        "Centro", "Estatus", "Venta", "Fecha creacion", "Back Office",
-                    ] if c in df_esv.columns]
-
-                    show_esv = df_esv[cols_esv].copy().rename(columns={"Vendedor": "Ejecutivo"})
-                    show_esv = show_esv.assign(_age=df_esv["TD_Age_Desde_Creacion"]).sort_values("_age", ascending=False).drop(columns=["_age"], errors="ignore")
-
-                    st.dataframe(show_esv, use_container_width=True, hide_index=True)
-
-                    st.download_button(
-                        "Descargar Entregado sin Venta (Excel)",
-                        data=dfs_to_excel_bytes({"Entregado_sin_Venta": show_esv}),
-                        file_name=f"entregado_sin_venta_{fecha_ini}_{fecha_fin}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    )
-
             st.caption(f"Actualizado: {st.session_state['last_refresh'].strftime('%Y-%m-%d %H:%M')}")
 
     # ============================
@@ -1454,15 +1596,19 @@ def main():
 
             st.subheader("📊 Gráficas (enfoque jefe)")
 
-            c1, c2 = st.columns(2)
+            c1, c2 = st.columns(2, gap="large")
             with c1:
                 st.plotly_chart(make_funnel(counts), use_container_width=True, key="t1_funnel")
             with c2:
                 st.plotly_chart(make_flow_bar(counts), use_container_width=True, key="t1_flow_bar")
 
-            fig_buckets = make_time_buckets_chart(view)
+            fig_buckets = make_time_buckets_chart(view, include_sin_dato=False)
             if fig_buckets is not None:
                 st.plotly_chart(fig_buckets, use_container_width=True, key="t1_buckets")
+
+            fig_health = make_bottleneck_matrix(view, include_sin_dato=False)
+            if fig_health is not None:
+                st.plotly_chart(fig_health, use_container_width=True, key="t1_health")
 
             fig_sc = make_scatter_orders(view, color_by=("Centro Original" if "Centro Original" in view.columns else None))
             if fig_sc is not None:
@@ -1524,9 +1670,11 @@ def main():
                 by_stage = crit.groupby("Estatus", as_index=False).size().rename(columns={"size": "Críticos"})
                 by_stage["Estatus"] = pd.Categorical(by_stage["Estatus"], categories=FLOW_STAGES_NO_TOTAL, ordered=True)
                 by_stage = by_stage.sort_values("Estatus")
-                
-                fig = px.bar(by_stage, x="Estatus", y="Críticos", title="Críticos por etapa", text_auto=True, template="plotly_white")
+
+                fig = px.bar(by_stage, x="Estatus", y="Críticos", title="Críticos por etapa", text_auto=True, template=PLOTLY_TEMPLATE)
                 fig.update_xaxes(type="category")
+                fig.update_traces(textfont_color=TEXT_LABEL_COLOR)
+                apply_plotly_theme(fig)
                 st.plotly_chart(fig, use_container_width=True, key="t2_criticos_por_etapa")
 
             st.download_button(
