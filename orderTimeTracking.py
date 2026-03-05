@@ -1,11 +1,8 @@
-# app.py ✅ BOSS-READY + INYECCIÓN DIRECTA DE RASTREO
-# ✅ Fix definitivo: Python ahora extrae "En preparacion" y "En entrega" directamente
-#    de la tabla dbo.pedido_telefonia_rastreo y hace un JOIN (merge) automático.
-
 import streamlit as st
 import pandas as pd
 import numpy as np
 import unicodedata
+import calendar
 from datetime import date, datetime, time, timedelta
 import pyodbc
 import plotly.express as px
@@ -141,6 +138,7 @@ def _safe_sheet_name(name: str) -> str:
     out = out.strip() or "Sheet"
     return out[:31]
 
+
 def dfs_to_excel_bytes(sheets: dict) -> bytes:
     output = BytesIO()
     used_names = set()
@@ -190,11 +188,13 @@ def fmt_int(x):
     except Exception:
         return "0"
 
+
 def fmt_pct(x):
     try:
         return f"{float(x) * 100:.1f}%"
     except Exception:
         return "0.0%"
+
 
 def fmt_timedelta(td) -> str:
     if td is None or pd.isna(td):
@@ -215,12 +215,14 @@ def fmt_timedelta(td) -> str:
     mm = (secs % 3600) // 60
     return f"{days}d {hh:02d}:{mm:02d}" if days > 0 else f"{hh:02d}:{mm:02d}"
 
+
 def fmt_done_or_in_process(td_done, td_age):
     if td_done is not None and pd.notna(td_done):
         return fmt_timedelta(td_done)
     if td_age is not None and pd.notna(td_age):
         return f"En proceso · {fmt_timedelta(td_age)}"
     return "—"
+
 
 def td_to_hours(td) -> float:
     if td is None or pd.isna(td):
@@ -229,6 +231,7 @@ def td_to_hours(td) -> float:
         return float(pd.to_timedelta(td).total_seconds() / 3600.0)
     except Exception:
         return np.nan
+
 
 def kpi_card(label, value, sub=None):
     sub_html = f'<div class="sub">{sub}</div>' if sub else ""
@@ -243,11 +246,14 @@ def kpi_card(label, value, sub=None):
         unsafe_allow_html=True,
     )
 
+
 def render_flow_pills(counts: dict):
     html = '<div class="flow-wrap">'
     for k in FLOW_ORDER:
         v = counts.get(k, 0)
         html += f'<div class="flow-pill">{k}<small>({int(v)})</small></div>'
+        if k != FLOW_ORDER[-1]:
+            html += '<div style="color: #94a3b8; font-weight: bold; font-size: 1.2rem;">➔</div>'
     html += "</div>"
     st.markdown(html, unsafe_allow_html=True)
 
@@ -262,6 +268,7 @@ def _norm_col(s: str) -> str:
     s = s.replace("_", " ")
     s = " ".join(s.split())
     return s
+
 
 def canon_estatus(x: str) -> str:
     s = str(x).strip()
@@ -282,17 +289,21 @@ def canon_estatus(x: str) -> str:
         return "Entregado"
     return str(x).strip()
 
+
 def sanitize_dates(dt_series: pd.Series) -> pd.Series:
     if not pd.api.types.is_datetime64_any_dtype(dt_series):
         dt_series = pd.to_datetime(dt_series, errors="coerce")
-    return dt_series.where(dt_series >= pd.Timestamp('2000-01-01'), pd.NaT)
+    return dt_series.where(dt_series >= pd.Timestamp("2000-01-01"), pd.NaT)
+
 
 def _extract_datetime_text(series: pd.Series) -> pd.Series:
     s = series.astype(str).str.strip()
-    s = s.replace({
-        "nan": "", "none": "", "nat": "", "NaN": "", "None": "", "NaT": "", "<NA>": "", "null": "", "Null": "",
-        "1900-01-01 00:00:00": "", "1900-01-01 00:00:00.000": "", "1900-01-01": "", "1900-01-01T00:00:00": ""
-    })
+    s = s.replace(
+        {
+            "nan": "", "none": "", "nat": "", "NaN": "", "None": "", "NaT": "", "<NA>": "", "null": "", "Null": "",
+            "1900-01-01 00:00:00": "", "1900-01-01 00:00:00.000": "", "1900-01-01": "", "1900-01-01T00:00:00": "",
+        }
+    )
     s = s.where(s != "", np.nan)
 
     if s.notna().any():
@@ -303,8 +314,9 @@ def _extract_datetime_text(series: pd.Series) -> pd.Series:
         return s2
     return s
 
+
 def parse_dt_both(series: pd.Series) -> tuple:
-    dt_native = pd.to_datetime(series, errors='coerce')
+    dt_native = pd.to_datetime(series, errors="coerce")
     s2 = _extract_datetime_text(series)
     dt_df = pd.to_datetime(s2, errors="coerce", dayfirst=True)
     dt_mf = pd.to_datetime(s2, errors="coerce", dayfirst=False)
@@ -313,21 +325,40 @@ def parse_dt_both(series: pd.Series) -> tuple:
     dt_mf = dt_mf.where(dt_mf.notna(), dt_native)
     return sanitize_dates(dt_df), sanitize_dates(dt_mf)
 
-def choose_dt_rowwise(dt_df: pd.Series, dt_mf: pd.Series, created: pd.Series | None=None, bo: pd.Series | None=None) -> pd.Series:
+def choose_dt_rowwise(dt_df: pd.Series, dt_mf: pd.Series, created: pd.Series | None = None, bo: pd.Series | None = None) -> pd.Series:
+    now_ts = pd.Timestamp(datetime.now())
+    max_ts = now_ts + pd.Timedelta(days=1)
+
     out = dt_df.copy()
-    out = out.where(~(dt_df.isna() & dt_mf.notna()), dt_mf)
+    
+    valid_df = dt_df.notna() & (dt_df <= max_ts)
+    valid_mf = dt_mf.notna() & (dt_mf <= max_ts)
+
+    out = out.where(~(valid_mf & ~valid_df), dt_mf)
+
+    base_dt = bo if bo is not None and bo.notna().any() else created
+    
+    if base_dt is not None:
+        c_dt = pd.to_datetime(base_dt, errors="coerce")
+        
+        valid_df_c = valid_df & (c_dt.isna() | (dt_df >= c_dt))
+        valid_mf_c = valid_mf & (c_dt.isna() | (dt_mf >= c_dt))
+        
+        out = out.where(~(valid_mf_c & ~valid_df_c), dt_mf)
+        
+        both = valid_df_c & valid_mf_c & c_dt.notna()
+        if both.any():
+            diff_df = (dt_df - c_dt).abs()
+            diff_mf = (dt_mf - c_dt).abs()
+            out = out.where(~(both & (diff_mf < diff_df)), dt_mf)
+
+    out = out.where(out <= max_ts, pd.NaT)
     return sanitize_dates(out)
 
-# ✅ FIX NUEVO (mínimo): selector robusto para ACTIVACIÓN usando BO como referencia + anti-futuro
+
 def choose_dt_activation_rowwise(dt_df: pd.Series, dt_mf: pd.Series, bo: pd.Series | None = None) -> pd.Series:
-    """
-    Selección robusta para ACTIVACIÓN:
-    - Descarta fechas en el futuro (tolerancia 1 día)
-    - Descarta fechas < BO (si BO existe)
-    - Si ambas (DF/MF) son válidas, elige la más cercana a BO
-    """
     now_ts = pd.Timestamp(datetime.now())
-    max_ts = now_ts + pd.Timedelta(days=1)  # tolerancia pequeña por TZ / retrasos
+    max_ts = now_ts + pd.Timedelta(days=1)
 
     out = dt_df.copy()
     out = out.where(~(dt_df.isna() & dt_mf.notna()), dt_mf)
@@ -337,7 +368,6 @@ def choose_dt_activation_rowwise(dt_df: pd.Series, dt_mf: pd.Series, bo: pd.Seri
 
     if bo is not None:
         bo_dt = pd.to_datetime(bo, errors="coerce")
-
         valid_df &= bo_dt.isna() | (dt_df >= bo_dt)
         valid_mf &= bo_dt.isna() | (dt_mf >= bo_dt)
 
@@ -354,7 +384,7 @@ def choose_dt_activation_rowwise(dt_df: pd.Series, dt_mf: pd.Series, bo: pd.Seri
     out = out.where(out <= max_ts, pd.NaT)
     return sanitize_dates(out)
 
-# ✅ FIX NUEVO (mínimo): selector robusto para FECHA CREACIÓN usando BO como referencia + anti-futuro
+
 def choose_dt_created_rowwise(
     dt_df: pd.Series,
     dt_mf: pd.Series,
@@ -362,13 +392,6 @@ def choose_dt_created_rowwise(
     window_start: date | None = None,
     window_end: date | None = None,
 ) -> pd.Series:
-    """
-    Selección robusta para FECHA CREACIÓN:
-    - Descarta fechas en el futuro (tolerancia 1 día)
-    - Si BO existe, creación debe ser <= BO
-    - Si ambas (DF/MF) son válidas, elige la más cercana a BO (la mayor pero <= BO)
-    - Si no hay BO, usa ventana para preferir el parse dentro del periodo
-    """
     now_ts = pd.Timestamp(datetime.now())
     max_ts = now_ts + pd.Timedelta(days=1)
 
@@ -387,9 +410,7 @@ def choose_dt_created_rowwise(
 
         both = valid_df & valid_mf & bo_dt.notna()
         if both.any():
-            # elige la mayor (más cercana a BO) pero <= BO
             out = out.where(~(both & (dt_mf > dt_df)), dt_mf)
-
     else:
         if window_start is not None and window_end is not None:
             w0 = pd.Timestamp(window_start)
@@ -402,6 +423,7 @@ def choose_dt_created_rowwise(
 
     out = out.where(out <= max_ts, pd.NaT)
     return sanitize_dates(out)
+
 
 def parse_backoffice_datetime(series: pd.Series, window_start: date | None = None, window_end: date | None = None) -> pd.Series:
     dt_df, dt_mf = parse_dt_both(series)
@@ -420,6 +442,7 @@ def parse_backoffice_datetime(series: pd.Series, window_start: date | None = Non
     out = out.where(~(dt_df.isna() & dt_mf.notna()), dt_mf)
     return out
 
+
 def choose_backoffice_dt(df: pd.DataFrame, window_start: date, window_end: date) -> pd.Series:
     if "BO_DT_DF" in df.columns and "BO_DT_MF" in df.columns:
         dt_dayfirst = df["BO_DT_DF"]
@@ -435,47 +458,13 @@ def choose_backoffice_dt(df: pd.DataFrame, window_start: date, window_end: date)
         out = out.where(~(in2 & ~in1), dt_monthfirst)
         out = out.where(~(dt_dayfirst.isna() & dt_monthfirst.notna()), dt_monthfirst)
         return sanitize_dates(out)
+
     return parse_backoffice_datetime(df["Back Office"], window_start=window_start, window_end=window_end)
+
 
 def _reference_end_dt(fecha_fin: date) -> datetime:
     return datetime.now() if fecha_fin == date.today() else datetime.combine(fecha_fin, time(23, 59, 59))
 
-def pick_activation_dt(df: pd.DataFrame) -> tuple:
-    if df is None or df.empty:
-        return pd.Series(pd.NaT, index=df.index), None
-
-    cols_norm = {_norm_col(c): c for c in df.columns}
-    created = df["CREATED_DT"] if "CREATED_DT" in df.columns else None
-    bo = df["BO_DT"] if "BO_DT" in df.columns else None
-
-    def _try_col(colname: str):
-        if colname not in df.columns:
-            return None
-        dt_df, dt_mf = parse_dt_both(df[colname])
-        chosen = choose_dt_activation_rowwise(dt_df, dt_mf, bo=bo)  # ✅ CAMBIO MÍNIMO AQUÍ
-        return chosen if chosen.notna().any() else None
-
-    for key in ["fecha activacion", "fecha de activacion", "fecha activación"]:
-        col = cols_norm.get(key)
-        if col:
-            chosen = _try_col(col)
-            if chosen is not None:
-                return chosen, col
-
-    for key in ["fecha venta", "fecha de venta", "fecha_venta"]:
-        col = cols_norm.get(key)
-        if col:
-            chosen = _try_col(col)
-            if chosen is not None:
-                return chosen, col
-
-    col = cols_norm.get("venta")
-    if col:
-        chosen = _try_col(col)
-        if chosen is not None:
-            return chosen, col
-
-    return pd.Series(pd.NaT, index=df.index), None
 
 def pick_activation_dt(df: pd.DataFrame) -> tuple:
     if df is None or df.empty:
@@ -513,6 +502,7 @@ def pick_activation_dt(df: pd.DataFrame) -> tuple:
 
     return pd.Series(pd.NaT, index=df.index), None
 
+
 def pick_stage_dt_from_columns(df: pd.DataFrame, stage: str, created: pd.Series, bo: pd.Series) -> tuple:
     if df is None or df.empty:
         return pd.Series(pd.NaT, index=df.index), None
@@ -536,7 +526,6 @@ def pick_stage_dt_from_columns(df: pd.DataFrame, stage: str, created: pd.Series,
             continue
         if stage_n == "entregado" and nc == "en entrega":
             continue
-
         if any(k in nc for k in keys):
             cols.append(c)
 
@@ -622,8 +611,8 @@ def load_hoja1():
     df = pd.read_sql(sql, conn)
 
     text_cols = [
-        "NombreCompleto","JefeDirecto","Region","SubRegion","Plaza","Tienda",
-        "Puesto","Canal de Venta","Tipo Tienda","Operacion","Estatus"
+        "NombreCompleto", "JefeDirecto", "Region", "SubRegion", "Plaza", "Tienda",
+        "Puesto", "Canal de Venta", "Tipo Tienda", "Operacion", "Estatus"
     ]
     for col in text_cols:
         df[col] = df[col].astype(str).str.strip()
@@ -633,6 +622,7 @@ def load_hoja1():
     df["Coordinador"] = df["JefeDirecto"]
     df = df[df["NombreCompleto"].str.upper() != EXCLUDED_VENDOR].copy()
     return df
+
 
 @st.cache_data
 def load_consulta1(fecha_ini: date, fecha_fin: date) -> pd.DataFrame:
@@ -656,13 +646,12 @@ def load_consulta1(fecha_ini: date, fecha_fin: date) -> pd.DataFrame:
     cur.close()
     return df
 
-# ✅ FIX NUEVO: Función para conectarse directo a la tabla de bitácora
+
 @st.cache_data
 def load_rastreo_extra(fecha_ini: date, fecha_fin: date) -> pd.DataFrame:
     fi = fecha_ini.strftime("%Y%m%d")
     ff = fecha_fin.strftime("%Y%m%d")
 
-    # Esta consulta cruza la tabla de bitácora con los datos filtrados para sacar SOLO lo que nos importa
     sql = f"""
     SELECT 
         r.id_pedido_telefonia AS Programacion, 
@@ -688,31 +677,30 @@ def load_rastreo_extra(fecha_ini: date, fecha_fin: date) -> pd.DataFrame:
 def transform_consulta1(df_raw: pd.DataFrame, hoja: pd.DataFrame, rastreo_extra: pd.DataFrame) -> pd.DataFrame:
     df = df_raw.copy()
 
-    # ✅ FIX NUEVO: Pegamos las columnas faltantes directamente desde la bitácora
     if rastreo_extra is not None and not rastreo_extra.empty:
         piv = rastreo_extra.pivot_table(index="Programacion", columns="accion", values="fecha_rastreo", aggfunc="max").reset_index()
-
         rename_map = {
             "En preparacion": "Fecha En preparacion Exacta",
             "En entrega": "Fecha En entrega Exacta",
-            "Reprogramado": "Fecha Reprogramado Exacta"
+            "Reprogramado": "Fecha Reprogramado Exacta",
         }
         piv.rename(columns=rename_map, inplace=True)
-
         if "Programacion" in df.columns:
             df = df.merge(piv, on="Programacion", how="left")
 
     clean_cols = [
         "Centro", "Estatus", "Back Office", "Vendedor", "Cliente",
         "Nuevo", "Solicitado", "En preparacion", "En preparación",
-        "En entrega", "Reprogramado", "Entregado", "Fecha creacion", "Venta"
+        "En entrega", "Reprogramado", "Entregado", "Fecha creacion", "Venta",
     ]
     for col in df.columns:
         if col in clean_cols or "fecha" in col.lower() or any(stg in col for stg in ["Solicitado", "preparacion", "entrega", "Reprogramado", "Entregado"]):
-            df[col] = df[col].astype(str).str.strip().replace({
-                "nan": np.nan, "None": np.nan, "NaT": np.nan, "nat": np.nan, "none": np.nan, "<NA>": np.nan, "null": np.nan,
-                "1900-01-01 00:00:00": np.nan, "1900-01-01 00:00:00.000": np.nan, "1900-01-01": np.nan, "1900-01-01T00:00:00": np.nan
-            })
+            df[col] = df[col].astype(str).str.strip().replace(
+                {
+                    "nan": np.nan, "None": np.nan, "NaT": np.nan, "nat": np.nan, "none": np.nan, "<NA>": np.nan, "null": np.nan,
+                    "1900-01-01 00:00:00": np.nan, "1900-01-01 00:00:00.000": np.nan, "1900-01-01": np.nan, "1900-01-01T00:00:00": np.nan,
+                }
+            )
 
     if "Vendedor" in df.columns:
         df = df[df["Vendedor"].astype(str).str.upper() != EXCLUDED_VENDOR].copy()
@@ -740,7 +728,6 @@ def transform_consulta1(df_raw: pd.DataFrame, hoja: pd.DataFrame, rastreo_extra:
     df.drop(columns=["Nombre Completo"], inplace=True, errors="ignore")
     df["Jefe directo"] = df["Jefe directo"].fillna("").astype(str).str.strip().replace("", "ENCUBADORA")
 
-    # (se mantiene) parse previo de Fecha creacion, build_view decide DF/MF final
     if "Fecha creacion" in df.columns:
         df["Fecha creacion"] = pd.to_datetime(df["Fecha creacion"], errors="coerce", dayfirst=True)
         df["Fecha creacion"] = sanitize_dates(df["Fecha creacion"])
@@ -769,17 +756,11 @@ def transform_consulta1(df_raw: pd.DataFrame, hoja: pd.DataFrame, rastreo_extra:
 # BUILD VIEW
 # -------------------------------------------------
 def build_view(df_ctx: pd.DataFrame, fecha_ini: date, fecha_fin: date):
-    meta = {
-        "activation_col": None,
-        "has_activation_dt": False,
-        "stage_sources": {}
-    }
+    meta = {"activation_col": None, "has_activation_dt": False, "stage_sources": {}}
     df = df_ctx.copy()
 
-    # ✅ BO primero (para poder decidir CREATED_DT contra BO)
     df["BO_DT"] = choose_backoffice_dt(df, window_start=fecha_ini, window_end=fecha_fin) if "Back Office" in df.columns else pd.NaT
 
-    # ✅ CREATED_DT robusto (DF/MF) usando BO como referencia
     if "Fecha creacion" in df.columns:
         c_df, c_mf = parse_dt_both(df["Fecha creacion"])
         df["CREATED_DT"] = choose_dt_created_rowwise(c_df, c_mf, bo=df["BO_DT"], window_start=fecha_ini, window_end=fecha_fin)
@@ -806,7 +787,6 @@ def build_view(df_ctx: pd.DataFrame, fecha_ini: date, fecha_fin: date):
     act_dt, act_col = pick_activation_dt(df)
     df["ACT_DT"] = sanitize_dates(act_dt)
 
-    # ✅ Guardrail mínimo: una activación no puede estar en el futuro
     _now = pd.Timestamp(datetime.now()) + pd.Timedelta(days=1)
     df.loc[df["ACT_DT"] > _now, "ACT_DT"] = pd.NaT
 
@@ -836,11 +816,18 @@ def build_view(df_ctx: pd.DataFrame, fecha_ini: date, fecha_fin: date):
     df["TD_Preparacion_a_EnEntrega"] = safe_td(df["STG_EnEntrega_DT"], df["STG_EnPreparacion_DT"])
     df["TD_EnEntrega_a_Entregado"] = safe_td(df["STG_Entregado_DT"], df["STG_EnEntrega_DT"])
 
+    df["TD_BO_a_Entregado"] = safe_td(df["STG_Entregado_DT"], df["BO_DT"])
+    df["TD_Creacion_a_Entregado"] = safe_td(df["STG_Entregado_DT"], df["CREATED_DT"])
+
     ref_dt = pd.Timestamp(_reference_end_dt(fecha_fin))
     df["TD_Age_Desde_Creacion"] = ref_dt - df["CREATED_DT"]
     df["TD_Age_Desde_BO"] = ref_dt - df["BO_DT"]
 
-    for c in ["TD_Creacion_a_BO","TD_BO_a_Act","TD_Creacion_a_Act","TD_Age_Desde_Creacion","TD_Age_Desde_BO"]:
+    for c in [
+        "TD_Creacion_a_BO", "TD_BO_a_Act", "TD_Creacion_a_Act",
+        "TD_Age_Desde_Creacion", "TD_Age_Desde_BO",
+        "TD_BO_a_Entregado", "TD_Creacion_a_Entregado",
+    ]:
         df.loc[df[c] < pd.Timedelta(0), c] = pd.NaT
 
     df["H_Creacion_a_BO"] = df["TD_Creacion_a_BO"].apply(td_to_hours)
@@ -848,6 +835,12 @@ def build_view(df_ctx: pd.DataFrame, fecha_ini: date, fecha_fin: date):
     df["H_Creacion_a_Act"] = df["TD_Creacion_a_Act"].apply(td_to_hours)
     df["H_Age_Desde_Creacion"] = df["TD_Age_Desde_Creacion"].apply(td_to_hours)
     df["H_Age_Desde_BO"] = df["TD_Age_Desde_BO"].apply(td_to_hours)
+    
+    df["H_Nuevo_a_BO"] = df["TD_Creacion_a_BO"].apply(td_to_hours)
+    df["H_BO_a_Solicitado"] = df["TD_BO_a_Solicitado"].apply(td_to_hours)
+    df["H_Solicitado_a_Prep"] = df["TD_Solicitado_a_Preparacion"].apply(td_to_hours)
+    df["H_Prep_a_Entrega"] = df["TD_Preparacion_a_EnEntrega"].apply(td_to_hours)
+    df["H_Entrega_a_Entregado"] = df["TD_EnEntrega_a_Entregado"].apply(td_to_hours)
 
     df["CREATED_DATE"] = df["CREATED_DT"].dt.date
     df["CREATED_HOUR"] = df["CREATED_DT"].dt.hour
@@ -856,22 +849,304 @@ def build_view(df_ctx: pd.DataFrame, fecha_ini: date, fecha_fin: date):
     return df, meta
 
 # -------------------------------------------------
-# CHARTS
+# VISUALS: buckets + top slow + scatter
+# -------------------------------------------------
+def _bucket_hours(h: float) -> str:
+    if h is None or (isinstance(h, float) and np.isnan(h)):
+        return "Sin dato"
+    if h <= 2:
+        return "≤2h"
+    if h <= 6:
+        return "2–6h"
+    if h <= 12:
+        return "6–12h"
+    if h <= 24:
+        return "12–24h"
+    if h <= 48:
+        return "1–2d"
+    if h <= 72:
+        return "2–3d"
+    return ">3d"
+
+
+_BUCKET_ORDER = ["≤2h", "2–6h", "6–12h", "12–24h", "1–2d", "2–3d", ">3d", "Sin dato"]
+
+
+def make_time_buckets_chart(view: pd.DataFrame) -> go.Figure | None:
+    if view.empty:
+        return None
+
+    d = view.copy()
+    d_ent = d[d["Estatus"].astype(str).eq("Entregado")].copy()
+
+    if d_ent.empty and d["TD_Creacion_a_BO"].notna().sum() == 0:
+        return None
+
+    rows = []
+
+    if "TD_Creacion_a_BO" in d.columns:
+        h = d["TD_Creacion_a_BO"].apply(td_to_hours)
+        vc = h.apply(_bucket_hours).value_counts().to_dict()
+        for k, v in vc.items():
+            rows.append({"Tramo": "Nuevo→BO", "Rango": k, "Órdenes": int(v)})
+
+    if not d_ent.empty and "TD_BO_a_Entregado" in d_ent.columns:
+        h = d_ent["TD_BO_a_Entregado"].apply(td_to_hours)
+        vc = h.apply(_bucket_hours).value_counts().to_dict()
+        for k, v in vc.items():
+            rows.append({"Tramo": "BO→Entregado", "Rango": k, "Órdenes": int(v)})
+
+    if not d_ent.empty and "TD_Creacion_a_Entregado" in d_ent.columns:
+        h = d_ent["TD_Creacion_a_Entregado"].apply(td_to_hours)
+        vc = h.apply(_bucket_hours).value_counts().to_dict()
+        for k, v in vc.items():
+            rows.append({"Tramo": "Total→Entregado", "Rango": k, "Órdenes": int(v)})
+
+    if not rows:
+        return None
+
+    dfb = pd.DataFrame(rows)
+    dfb["Rango"] = pd.Categorical(dfb["Rango"], categories=_BUCKET_ORDER, ordered=True)
+    dfb = dfb.sort_values(["Rango", "Tramo"])
+
+    fig = px.bar(
+        dfb,
+        x="Rango",
+        y="Órdenes",
+        color="Tramo",
+        barmode="group",
+        text_auto=True, 
+        title="Distribución por rangos de tiempo (volumen general)",
+        template="plotly_white",
+        color_discrete_sequence=["#0ea5e9", "#6366f1", "#10b981"]
+    )
+    
+    fig.update_traces(textfont_size=13, textangle=0, textposition="outside", cliponaxis=False)
+    fig.update_layout(
+        margin=dict(l=40, r=20, t=70, b=20), 
+        legend_title_text="Tramo",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    fig.update_yaxes(title="Cantidad de Órdenes", showgrid=True, gridcolor="#f1f5f9")
+    fig.update_xaxes(title="Rango de Tiempo", showgrid=False)
+    
+    return fig
+
+
+def make_bottleneck_matrix(view: pd.DataFrame) -> go.Figure | None:
+    if view.empty:
+        return None
+
+    stages_map = {
+        "1. Nuevo→BO": "H_Nuevo_a_BO",
+        "2. BO→Solicit": "H_BO_a_Solicitado",
+        "3. Solicit→Prep": "H_Solicitado_a_Prep",
+        "4. Prep→Entrega": "H_Prep_a_Entrega",
+        "5. Entrega→Fin": "H_Entrega_a_Entregado"
+    }
+
+    rows = []
+    for stage_name, col in stages_map.items():
+        if col in view.columns:
+            valid_hours = view[view[col].notna()][col]
+            if not valid_hours.empty:
+                buckets = valid_hours.apply(_bucket_hours).value_counts(normalize=True) * 100
+                for bucket, pct in buckets.items():
+                    rows.append({"Etapa": stage_name, "Rango": bucket, "Porcentaje": pct})
+
+    if not rows:
+        return None
+
+    df_b = pd.DataFrame(rows)
+    df_b["Rango"] = pd.Categorical(df_b["Rango"], categories=_BUCKET_ORDER, ordered=True)
+    df_b = df_b.sort_values(["Etapa", "Rango"])
+
+    color_map = {
+        "≤2h": "#10b981",     
+        "2–6h": "#34d399",    
+        "6–12h": "#fcd34d",   
+        "12–24h": "#fbbf24",  
+        "1–2d": "#f97316",    
+        "2–3d": "#ef4444",    
+        ">3d": "#991b1b",     
+        "Sin dato": "#e2e8f0"
+    }
+
+    fig = px.bar(
+        df_b,
+        x="Etapa",
+        y="Porcentaje",
+        color="Rango",
+        title="🚦 Salud del Proceso: ¿Dónde se atoran las órdenes? (% por etapa)",
+        color_discrete_map=color_map,
+        text_auto=".1f" 
+    )
+
+    fig.update_traces(textfont_size=12, textfont_color="white")
+    fig.update_layout(
+        template="plotly_white",
+        margin=dict(l=40, r=20, t=70, b=20),
+        yaxis_title="% de Órdenes",
+        xaxis_title="Transición de Etapa",
+        legend_title="Tiempo que tardó"
+    )
+    return fig
+
+
+def _pick_order_id_col(df: pd.DataFrame) -> str:
+    for c in ["Programacion", "Folio", "Telefono", "Cliente"]:
+        if c in df.columns:
+            return c
+    return "__index__"
+
+
+def make_top_slowest_bar(view: pd.DataFrame, n: int = 20) -> go.Figure | None:
+    if view.empty or "TD_Creacion_a_Entregado" not in view.columns:
+        return None
+    d = view[view["Estatus"].astype(str).eq("Entregado")].copy()
+    if d.empty:
+        return None
+
+    d["_h_total"] = d["TD_Creacion_a_Entregado"].apply(td_to_hours)
+    d = d[np.isfinite(d["_h_total"])].copy()
+    if d.empty:
+        return None
+
+    id_col = _pick_order_id_col(d)
+    if id_col == "__index__":
+        d[id_col] = d.index.astype(str)
+    else:
+        d[id_col] = d[id_col].astype(str)
+
+    d = d.sort_values("_h_total", ascending=False).head(int(n)).copy()
+    d = d.sort_values("_h_total", ascending=True)
+
+    stage_cols = {
+        "H_Nuevo_a_BO": "1. Nuevo→BO",
+        "H_BO_a_Solicitado": "2. BO→Solicit",
+        "H_Solicitado_a_Prep": "3. Solicit→Prep",
+        "H_Prep_a_Entrega": "4. Prep→Entrega",
+        "H_Entrega_a_Entregado": "5. Entrega→Fin"
+    }
+    
+    melted = []
+    for _, row in d.iterrows():
+        order_id = row[id_col]
+        for col, label in stage_cols.items():
+            if col in row and pd.notna(row[col]):
+                val = float(row[col])
+                if val > 0: 
+                    melted.append({
+                        "Orden": order_id,
+                        "Etapa": label,
+                        "Horas": val,
+                        "Total_Horas": row["_h_total"] 
+                    })
+                    
+    df_melt = pd.DataFrame(melted)
+    if df_melt.empty:
+        return None
+
+    fig = px.bar(
+        df_melt,
+        x="Horas",
+        y="Orden",
+        color="Etapa",
+        orientation="h",
+        title=f"🚨 Radiografía: Top {len(d)} Órdenes Más Lentas (Desglose por Etapa)",
+        template="plotly_white",
+        text_auto=".1f",
+        color_discrete_sequence=px.colors.qualitative.Pastel
+    )
+    
+    fig.update_traces(textfont_size=11, textposition="inside")
+    fig.update_layout(
+        margin=dict(l=40, r=40, t=70, b=20), 
+        barmode='stack',
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    fig.update_xaxes(title="Horas Acumuladas (Creación → Entregado)", showgrid=True, gridcolor="#f1f5f9")
+    fig.update_yaxes(title="ID de Orden")
+    
+    return fig
+
+
+def make_scatter_orders(view: pd.DataFrame, color_by: str | None = None) -> go.Figure | None:
+    if view.empty:
+        return None
+    d = view[view["Estatus"].astype(str).eq("Entregado")].copy()
+    if d.empty or "STG_Entregado_DT" not in d.columns:
+        return None
+    d = d[d["STG_Entregado_DT"].notna()].copy()
+    if d.empty:
+        return None
+
+    d["_h_total"] = d["TD_Creacion_a_Entregado"].apply(td_to_hours)
+    d = d[np.isfinite(d["_h_total"])].copy()
+    if d.empty:
+        return None
+
+    d = d.sort_values("STG_Entregado_DT", ascending=True).tail(2500).copy()
+
+    id_col = _pick_order_id_col(d)
+    if id_col == "__index__":
+        d[id_col] = d.index.astype(str)
+    else:
+        d[id_col] = d[id_col].astype(str)
+
+    hover_cols = [c for c in [id_col, "Cliente", "Telefono", "Folio", "Programacion", "Centro Original", "Jefe directo", "Vendedor"] if c in d.columns]
+    hover = {c: True for c in hover_cols}
+    hover["_h_total"] = True
+
+    if color_by is None or color_by not in d.columns:
+        fig = px.scatter(
+            d,
+            x="STG_Entregado_DT",
+            y="_h_total",
+            title="Cada orden: Fecha Entregado vs Horas Totales (Creación→Entregado)",
+            hover_data=hover,
+        )
+    else:
+        fig = px.scatter(
+            d,
+            x="STG_Entregado_DT",
+            y="_h_total",
+            color=color_by,
+            title=f"Cada orden: Fecha Entregado vs Horas Totales (color por {color_by})",
+            hover_data=hover,
+        )
+
+    fig.update_traces(
+        marker=dict(size=9, opacity=0.6, line=dict(width=1, color='rgba(0,0,0,0.2)'))
+    )
+    fig.update_layout(
+        template="plotly_white",
+        margin=dict(l=40, r=20, t=70, b=20),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    fig.update_xaxes(title="Fecha de Entrega", showgrid=True, gridcolor="#f1f5f9")
+    fig.update_yaxes(title="Horas (Creación → Entregado)", showgrid=True, gridcolor="#f1f5f9", zeroline=False)
+    return fig
+
+# -------------------------------------------------
+# OTHER CHARTS
 # -------------------------------------------------
 def make_funnel(counts: dict) -> go.Figure:
     stages = ["Nuevo", "Back Office", "Solicitado", "En preparacion", "En entrega", "Reprogramado", "Entregado"]
     values = [int(counts.get(s, 0)) for s in stages]
     fig = go.Figure(go.Funnel(y=stages, x=values))
-    fig.update_layout(title="Funnel del flujo operativo (conteos por etapa)", margin=dict(l=40, r=20, t=60, b=20))
+    fig.update_layout(title="Funnel del flujo operativo (conteos por etapa)", margin=dict(l=40, r=20, t=60, b=20), template="plotly_white")
     return fig
+
 
 def make_flow_bar(counts: dict) -> go.Figure:
     stages = ["Nuevo", "Back Office", "Solicitado", "En preparacion", "En entrega", "Reprogramado", "Entregado"]
     values = [int(counts.get(s, 0)) for s in stages]
-    fig = px.bar(pd.DataFrame({"Etapa": stages, "Total": values}), x="Etapa", y="Total", title="Conteos por etapa")
+    fig = px.bar(pd.DataFrame({"Etapa": stages, "Total": values}), x="Etapa", y="Total", title="Conteos por etapa", template="plotly_white", text_auto=True)
     fig.update_xaxes(type="category")
     fig.update_layout(margin=dict(l=40, r=20, t=60, b=20))
     return fig
+
 
 def make_backlog_over_time(view: pd.DataFrame) -> go.Figure | None:
     if view.empty or view["CREATED_DT"].isna().all():
@@ -880,77 +1155,9 @@ def make_backlog_over_time(view: pd.DataFrame) -> go.Figure | None:
     dfp["Fecha"] = dfp["CREATED_DT"].dt.date
     grp = dfp.groupby(["Fecha", "Estatus"]).size().reset_index(name="Total")
     grp = grp[grp["Estatus"].isin(FLOW_STAGES_NO_TOTAL)].copy()
-    return px.area(grp, x="Fecha", y="Total", color="Estatus", title="Backlog por etapa a través del tiempo (creación)")
-
-def make_bottleneck_chart(view: pd.DataFrame) -> go.Figure | None:
-    if view.empty:
-        return None
-    open_mask = ~view["Estatus"].astype(str).eq("Entregado")
-    dfp = view.loc[open_mask].copy()
-    if dfp.empty:
-        return None
-
-    dfp["Aging_h"] = np.where(
-        dfp["Estatus"].astype(str).eq("Back Office"),
-        dfp["H_Age_Desde_BO"],
-        dfp["H_Age_Desde_Creacion"],
-    )
-
-    grp = dfp.groupby("Estatus", as_index=False)["Aging_h"].median()
-    grp = grp[grp["Estatus"].isin(FLOW_STAGES_NO_TOTAL)].copy()
-    grp["Estatus"] = pd.Categorical(grp["Estatus"], categories=FLOW_STAGES_NO_TOTAL, ordered=True)
-    grp = grp.sort_values("Estatus")
-    return px.bar(grp, x="Aging_h", y="Estatus", orientation="h")
-
-def make_trends(view: pd.DataFrame, meta: dict) -> go.Figure | None:
-    if view.empty or view["CREATED_DT"].isna().all():
-        return None
-    created = (view.assign(Fecha=view["CREATED_DT"].dt.date).groupby("Fecha", as_index=False).size().rename(columns={"size": "Creadas"}))
-    if meta.get("has_activation_dt", False) and view["ACT_DT"].notna().any():
-        activated = (view[view["ACT_DT"].notna()].assign(Fecha=view["ACT_DT"].dt.date).groupby("Fecha", as_index=False).size().rename(columns={"size": "Activadas"}))
-    else:
-        activated = pd.DataFrame({"Fecha": [], "Activadas": []})
-    trend = created.merge(activated, on="Fecha", how="left")
-    trend["Activadas"] = trend["Activadas"].fillna(0).astype(int)
-    trend_long = trend.melt(id_vars="Fecha", var_name="Tipo", value_name="Total")
-
-    fig = px.line(trend_long, x="Fecha", y="Total", color="Tipo", markers=True, title="Tendencia: Creadas vs Activadas (por día)")
-    fig.update_layout(margin=dict(l=40, r=20, t=60, b=20))
+    fig = px.area(grp, x="Fecha", y="Total", color="Estatus", title="Backlog por etapa a través del tiempo (creación)", template="plotly_white")
     return fig
 
-def make_sla_gauge(sla_rate: float | None, sla_h: int) -> go.Figure:
-    val = 0 if sla_rate is None or np.isnan(sla_rate) else float(sla_rate) * 100.0
-    fig = go.Figure(
-        go.Indicator(
-            mode="gauge+number",
-            value=val,
-            number={"suffix": "%"},
-            title={"text": f"Cumplimiento SLA (BO → Activación ≤ {sla_h}h)"},
-            gauge={
-                "axis": {"range": [0, 100]},
-                "steps": [{"range": [0, 60]}, {"range": [60, 80]}, {"range": [80, 100]}],
-                "threshold": {"line": {"width": 4}, "thickness": 0.75, "value": 80},
-            },
-        )
-    )
-    fig.update_layout(margin=dict(l=20, r=20, t=70, b=20), height=320)
-    return fig
-
-def make_sla_trend(view: pd.DataFrame, sla_h: int, meta: dict) -> go.Figure | None:
-    if not meta.get("has_activation_dt", False):
-        return None
-    if view.empty or view["ACT_DT"].isna().all() or view["H_BO_a_Act"].dropna().empty:
-        return None
-    dfp = view[view["H_BO_a_Act"].notna()].copy()
-    dfp["Fecha"] = dfp["ACT_DT"].dt.date
-    grp = dfp.groupby("Fecha").agg(
-        Total=("H_BO_a_Act", "size"),
-        Dentro=("H_BO_a_Act", lambda s: int((s <= float(sla_h)).sum())),
-    ).reset_index()
-    grp["Cumplimiento_%"] = np.where(grp["Total"] > 0, grp["Dentro"] / grp["Total"] * 100.0, np.nan)
-    fig = px.line(grp, x="Fecha", y="Cumplimiento_%", markers=True, title="Cumplimiento SLA por día (BO → Activación)")
-    fig.update_yaxes(range=[0, 100])
-    return fig
 
 def make_heatmap_created(view: pd.DataFrame) -> go.Figure | None:
     if view.empty or view["CREATED_DT"].isna().all():
@@ -959,53 +1166,22 @@ def make_heatmap_created(view: pd.DataFrame) -> go.Figure | None:
     tmp["DOW"] = tmp["CREATED_DT"].dt.day_name()
     tmp["HOUR"] = tmp["CREATED_DT"].dt.hour
     piv = tmp.pivot_table(index="DOW", columns="HOUR", values="Estatus", aggfunc="count", fill_value=0)
-    order = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
+    order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
     piv = piv.reindex([d for d in order if d in piv.index])
     fig = px.imshow(piv, title="Mapa de calor: órdenes creadas (día vs hora)", aspect="auto")
     fig.update_layout(margin=dict(l=40, r=20, t=60, b=20))
     return fig
 
-def make_stage_waterfall(view: pd.DataFrame) -> go.Figure | None:
-    cols = [
-        ("Nuevo → Back Office", "TD_Creacion_a_BO"),
-        ("BO → Solicitado", "TD_BO_a_Solicitado"),
-        ("Solicitado → Preparación", "TD_Solicitado_a_Preparacion"),
-        ("Preparación → En entrega", "TD_Preparacion_a_EnEntrega"),
-        ("En entrega → Entregado", "TD_EnEntrega_a_Entregado"),
-    ]
-
-    labels, meds = [], []
-    for lab, c in cols:
-        labels.append(lab)
-        if c in view.columns and view[c].notna().any():
-            meds.append(view[c].dropna().median())
-        else:
-            meds.append(pd.NaT)
-
-    if all(pd.isna(x) for x in meds):
-        return None
-
-    hours = [td_to_hours(x) for x in meds]
-    hours_disp = [0 if (h is None or (isinstance(h, float) and np.isnan(h))) else float(h) for h in hours]
-
-    fig = go.Figure(go.Waterfall(
-        name="Mediana",
-        orientation="v",
-        x=labels,
-        y=hours_disp,
-        measure=["relative"] * len(labels),
-        text=[fmt_timedelta(m) for m in meds],
-        textposition="outside",
-    ))
-    fig.update_layout(title="Waterfall: tiempo mediano por etapa (si existen fechas por etapa)", showlegend=False)
-    fig.update_yaxes(title="Horas (mediana)")
-    return fig
-
 # -------------------------------------------------
 # MAIN
 # -------------------------------------------------
+def _month_bounds(y: int, m: int) -> tuple[date, date]:
+    last_day = calendar.monthrange(y, m)[1]
+    return date(y, m, 1), date(y, m, last_day)
+
+
 def main():
-    st.title("⏱️ Órdenes — Flujo y Tiempo de Activación")
+    st.title("⏱️ Órdenes — Flujo y Tiempo (Nuevo → BO → Entregado)")
 
     st.sidebar.header("Panel de control")
 
@@ -1015,38 +1191,38 @@ def main():
         st.session_state["last_refresh"] = datetime.now()
         st.rerun()
 
-    preset = st.sidebar.radio("Periodo", ["Hoy", "Últimos 7 días", "Últimos 30 días", "Personalizado"], index=2)
-
-    today = date.today()
-    if preset == "Hoy":
-        fecha_ini = today
-        fecha_fin = today
-    elif preset == "Últimos 7 días":
-        fecha_ini = today - timedelta(days=6)
-        fecha_fin = today
-    elif preset == "Últimos 30 días":
-        fecha_ini = today - timedelta(days=29)
-        fecha_fin = today
-    else:
-        fecha_ini = st.sidebar.date_input("Fecha inicio", today - timedelta(days=DEFAULT_LOOKBACK_DAYS))
-        fecha_fin = st.sidebar.date_input("Fecha fin", today)
-
-    if fecha_ini > fecha_fin:
-        st.sidebar.error("La fecha inicio no puede ser mayor que la fecha fin.")
-        return
-
+    # ✅ NUEVO: FILTRO DE PERIODO "DUMMY-FRIENDLY"
     st.sidebar.markdown("---")
-    sla_h = st.sidebar.number_input("SLA objetivo BO → Activación (horas)", 1, 240, 24, 1)
+    st.sidebar.subheader("📅 Periodo de Análisis")
+    
+    today = date.today()
+    years = list(range(today.year - 2, today.year + 1))
+    meses_nombres = [
+        "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+        "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
+    ]
 
-    st.sidebar.subheader("Alertas (horas) — Pendientes críticos")
-    alert_map = {
-        "Nuevo": st.sidebar.number_input("Nuevo >", 1, 720, 24, 1),
-        "Back Office": st.sidebar.number_input("Back Office >", 1, 720, 24, 1),
-        "Solicitado": st.sidebar.number_input("Solicitado >", 1, 720, 24, 1),
-        "En preparacion": st.sidebar.number_input("En preparacion >", 1, 720, 24, 1),
-        "En entrega": st.sidebar.number_input("En entrega >", 1, 720, 48, 1),
-        "Reprogramado": st.sidebar.number_input("Reprogramado >", 1, 720, 48, 1),
-    }
+    c1, c2 = st.sidebar.columns(2)
+    with c1:
+        y_sel = st.selectbox("Año", years, index=years.index(today.year))
+    with c2:
+        m_sel = st.selectbox("Mes", meses_nombres, index=today.month - 1)
+
+    # Convertir el nombre del mes a número (1-12)
+    m_num = meses_nombres.index(m_sel) + 1
+
+    # Calcular las fechas automáticamente para la base de datos
+    m0, m1 = _month_bounds(int(y_sel), m_num)
+    fecha_ini = m0
+    
+    # Si seleccionan el mes y año en curso, el límite es hoy para no buscar en el futuro
+    if int(y_sel) == today.year and m_num == today.month:
+        fecha_fin = min(m1, today)
+    else:
+        fecha_fin = m1
+
+    if fecha_ini > today:
+        st.sidebar.warning("Estás seleccionando un mes en el futuro.")
 
     with st.spinner("Cargando datos..."):
         hoja = load_hoja1()
@@ -1054,43 +1230,63 @@ def main():
         rastreo_extra = load_rastreo_extra(fecha_ini, fecha_fin)
         consulta = transform_consulta1(raw, hoja, rastreo_extra)
 
-    # Optional filters
-    with st.sidebar.expander("Filtros (opcional)"):
-        centros = ["All"] + sorted([c for c in consulta.get("Centro Original", pd.Series(dtype="object")).dropna().unique().tolist()])
-        supervisores = ["All"] + sorted([s for s in consulta.get("Jefe directo", pd.Series(dtype="object")).dropna().unique().tolist()])
-        centro_sel = st.selectbox("Centro", centros, 0)
-        supervisor_sel = st.selectbox("Supervisor", supervisores, 0)
+    # ✅ NUEVO: FILTROS LIMPIOS Y EN CASCADA (FUERA DEL EXPANDER)
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("🔎 Filtros de Operación")
+    
+    df_filter = consulta.copy()
 
-        df_for_exec = consulta.copy()
-        if centro_sel != "All" and "Centro Original" in df_for_exec.columns:
-            df_for_exec = df_for_exec[df_for_exec["Centro Original"] == centro_sel]
-        if supervisor_sel != "All" and "Jefe directo" in df_for_exec.columns:
-            df_for_exec = df_for_exec[df_for_exec["Jefe directo"] == supervisor_sel]
+    # 1. Filtro: Centro
+    if "Centro Original" in df_filter.columns:
+        centros = ["Todos"] + sorted([str(c) for c in df_filter["Centro Original"].dropna().unique() if str(c).strip() != ""])
+        centro_sel = st.sidebar.selectbox("🏢 Centro", centros, index=0)
+        if centro_sel != "Todos":
+            df_filter = df_filter[df_filter["Centro Original"] == centro_sel]
+    else:
+        centro_sel = "Todos"
 
-        if "Vendedor" in df_for_exec.columns:
-            df_for_exec = df_for_exec[df_for_exec["Vendedor"].astype(str).str.upper() != EXCLUDED_VENDOR]
-            ejecutivos = ["All"] + sorted(df_for_exec["Vendedor"].dropna().unique().tolist())
-        else:
-            ejecutivos = ["All"]
-        ejecutivo_sel = st.selectbox("Ejecutivo", ejecutivos, 0)
+    # 2. Filtro: Supervisor (Depende del Centro seleccionado)
+    if "Jefe directo" in df_filter.columns:
+        supervisores = ["Todos"] + sorted([str(s) for s in df_filter["Jefe directo"].dropna().unique() if str(s).strip() != ""])
+        supervisor_sel = st.sidebar.selectbox("👤 Supervisor", supervisores, index=0)
+        if supervisor_sel != "Todos":
+            df_filter = df_filter[df_filter["Jefe directo"] == supervisor_sel]
+    else:
+        supervisor_sel = "Todos"
 
-    # Apply filters
-    df = consulta.copy()
-    if "Centro Original" in df.columns and centro_sel != "All":
-        df = df[df["Centro Original"] == centro_sel]
-    if "Jefe directo" in df.columns and supervisor_sel != "All":
-        df = df[df["Jefe directo"] == supervisor_sel]
-    if "Vendedor" in df.columns and ejecutivo_sel != "All":
-        df = df[df["Vendedor"] == ejecutivo_sel]
+    # 3. Filtro: Ejecutivo (Depende del Centro y Supervisor seleccionados)
+    if "Vendedor" in df_filter.columns:
+        ejecutivos = ["Todos"] + sorted([str(v) for v in df_filter["Vendedor"].dropna().unique() if str(v).strip() != ""])
+        ejecutivo_sel = st.sidebar.selectbox("🎧 Ejecutivo", ejecutivos, index=0)
+        if ejecutivo_sel != "Todos":
+            df_filter = df_filter[df_filter["Vendedor"] == ejecutivo_sel]
+    else:
+        ejecutivo_sel = "Todos"
+
+    # El DataFrame final que se usa en toda la app
+    df = df_filter.copy()
+
+    # ✅ OCULTO: Las alertas ahora están en un expander para no ensuciar el menú principal
+    st.sidebar.markdown("---")
+    with st.sidebar.expander("⚙️ Configuración de Alertas (Horas)"):
+        st.caption("Define el umbral para considerar una orden como 'Crítica'.")
+        alert_map = {
+            "Nuevo": st.number_input("Nuevo >", 1, 720, 24, 1),
+            "Back Office": st.number_input("Back Office >", 1, 720, 24, 1),
+            "Solicitado": st.number_input("Solicitado >", 1, 720, 24, 1),
+            "En preparacion": st.number_input("En preparacion >", 1, 720, 24, 1),
+            "En entrega": st.number_input("En entrega >", 1, 720, 48, 1),
+            "Reprogramado": st.number_input("Reprogramado >", 1, 720, 48, 1),
+        }
 
     tabs = st.tabs(["Resumen Ejecutivo", "Gráficas", "Pendientes a Recuperar", "Detalle / Export"])
 
     # ============================
-    # TAB 0: RESUMEN
+    # TAB 0: RESUMEN (visual + per-order)
     # ============================
     with tabs[0]:
         if df.empty:
-            st.info("No hay datos para los filtros actuales.")
+            st.info("No hay datos para los filtros seleccionados.")
         else:
             view, meta = build_view(df, fecha_ini, fecha_fin)
             counts = compute_flow_counts(view)
@@ -1100,52 +1296,142 @@ def main():
 
             total = int(len(view))
             entregado = int((view["Estatus"].astype(str).eq("Entregado")).sum())
-            activadas_completas = int(view["IS_ACTIVADA_COMPLETA"].sum())
-            entregado_sin_venta = int(view["ENTREGADO_SIN_VENTA"].sum())
-
-            if meta["has_activation_dt"] and view["H_BO_a_Act"].notna().any():
-                ba = view[view["H_BO_a_Act"].notna()].copy()
-                sla_ok = int((ba["H_BO_a_Act"] <= float(sla_h)).sum())
-                sla_total = int(ba.shape[0])
-                sla_rate = (sla_ok / sla_total) if sla_total else np.nan
-            else:
-                sla_rate = np.nan
-
-            med_td_cb = view["TD_Creacion_a_BO"].dropna()
-            med_nuevo_bo = med_td_cb.median() if not med_td_cb.empty else pd.NaT
-
-            med_bo_act = view.loc[view["TD_BO_a_Act"].notna(), "TD_BO_a_Act"].median() if view["TD_BO_a_Act"].notna().any() else pd.NaT
-            med_age_bo = view.loc[view["TD_Age_Desde_BO"].notna(), "TD_Age_Desde_BO"].median() if view["TD_Age_Desde_BO"].notna().any() else pd.NaT
+            pendientes = int((~view["Estatus"].astype(str).eq("Entregado")).sum())
+            entregado_sin_venta_cnt = int(view["ENTREGADO_SIN_VENTA"].sum())
 
             st.markdown('<div class="kpi-row">', unsafe_allow_html=True)
             kpi_card("Órdenes en el periodo", fmt_int(total), sub=f"Del {fecha_ini} al {fecha_fin}")
-            kpi_card("Entregado (estatus)", fmt_int(entregado))
-            kpi_card("Activadas completas", fmt_int(activadas_completas), sub="Con Venta o con fecha de activación/venta")
-            kpi_card("Mediana Nuevo → Back Office", fmt_timedelta(med_nuevo_bo), sub="Back Office = Rastreo (col Back Office)")
-
-            if meta["has_activation_dt"]:
-                kpi_card("Mediana BO → Activación", fmt_timedelta(med_bo_act) if pd.notna(med_bo_act) else "—", sub=f"SLA ≤ {sla_h}h")
-                kpi_card("Cumplimiento SLA", fmt_pct(sla_rate) if not np.isnan(sla_rate) else "—", sub=f"BO → Activación (≤ {sla_h}h)")
-            else:
-                kpi_card("BO → Activación", "En proceso", sub=f"Mediana antigüedad desde BO: {fmt_timedelta(med_age_bo)}")
-                kpi_card("Cumplimiento SLA", "—", sub="Se habilita al tener Fecha activación/venta")
+            kpi_card("Entregadas", fmt_int(entregado))
+            kpi_card("Pendientes", fmt_int(pendientes))
+            kpi_card("Entregado sin Venta", fmt_int(entregado_sin_venta_cnt))
             st.markdown("</div>", unsafe_allow_html=True)
 
-            if entregado_sin_venta > 0:
-                st.warning(f"⚠️ Hay **{entregado_sin_venta}** órdenes en **Entregado** pero **sin Venta** (revisar / recuperar).")
+            st.markdown("---")
+            st.subheader("🎯 Tiempos del Proceso General")
+
+            c1, c2 = st.columns(2)
+            with c1:
+                fig_buckets = make_time_buckets_chart(view)
+                if fig_buckets is not None:
+                    st.plotly_chart(fig_buckets, use_container_width=True, key="t0_buckets")
+                else:
+                    st.info("No hay datos suficientes para distribución por rangos.")
+
+            with c2:
+                fig_health = make_bottleneck_matrix(view)
+                if fig_health is not None:
+                    st.plotly_chart(fig_health, use_container_width=True, key="t0_health")
+                else:
+                    st.info("No hay datos suficientes para la matriz de cuellos de botella.")
+
+            st.markdown("---")
+            st.subheader("🕵️ Análisis de Lentas y Cuellos de Botella")
+
+            fig_top = make_top_slowest_bar(view, n=20)
+            if fig_top is not None:
+                st.plotly_chart(fig_top, use_container_width=True, key="t0_top_slowest")
+            else:
+                st.info("No hay entregadas con tiempo total para ranking.")
+
+            st.markdown("---")
+            st.subheader("🟣 Cada orden (visual): fecha entregado vs horas totales")
+
+            color_opts = ["(sin color)"]
+            for c in ["Centro Original", "Jefe directo", "Vendedor"]:
+                if c in view.columns:
+                    color_opts.append(c)
+            color_by = st.selectbox("Color por", color_opts, index=1 if len(color_opts) > 1 else 0)
+            color_by = None if color_by == "(sin color)" else color_by
+
+            fig_sc = make_scatter_orders(view, color_by=color_by)
+            if fig_sc is not None:
+                st.plotly_chart(fig_sc, use_container_width=True, key="t0_scatter")
+            else:
+                st.info("No hay suficientes entregadas con fecha entregado para el scatter.")
+
+            st.markdown("---")
+            st.subheader("📄 Tiempos por orden (Nuevo → BO → Entregado)")
+            st.caption("Aquí ves **cada orden** y cuánto tardó en cada tramo (o 'En proceso').")
+
+            show_mode = st.selectbox("Mostrar", ["Solo Entregadas", "Solo Pendientes", "Todas"], index=0)
+            sort_mode = st.selectbox(
+                "Ordenar por",
+                ["Más recientes", "Más lentas Nuevo→BO", "Más lentas BO→Entregado", "Más lentas Total a Entregado"],
+                index=0,
+            )
+            topn = st.slider("Cantidad a mostrar", 20, 300, 80, 10)
+
+            tt = view.copy()
+
+            tt["Tiempo Nuevo→BO"] = [
+                (fmt_timedelta(done) if (done is not None and pd.notna(done))
+                 else (f"En proceso · {fmt_timedelta(age)}" if (str(stg) == "Nuevo" and age is not None and pd.notna(age)) else "—"))
+                for done, age, stg in zip(tt["TD_Creacion_a_BO"], tt["TD_Age_Desde_Creacion"], tt["Estatus"])
+            ]
+            tt["Tiempo BO→Entregado"] = [
+                fmt_done_or_in_process(done, age)
+                for done, age in zip(tt["TD_BO_a_Entregado"], tt["TD_Age_Desde_BO"])
+            ]
+            tt["Tiempo Total a Entregado"] = [
+                fmt_done_or_in_process(done, age)
+                for done, age in zip(tt["TD_Creacion_a_Entregado"], tt["TD_Age_Desde_Creacion"])
+            ]
+
+            if show_mode == "Solo Entregadas":
+                tt = tt[tt["Estatus"].astype(str).eq("Entregado")].copy()
+            elif show_mode == "Solo Pendientes":
+                tt = tt[~tt["Estatus"].astype(str).eq("Entregado")].copy()
+
+            tt["_h_nb"] = tt["TD_Creacion_a_BO"].apply(td_to_hours)
+            tt["_h_be"] = tt["TD_BO_a_Entregado"].apply(td_to_hours)
+            tt["_h_te"] = tt["TD_Creacion_a_Entregado"].apply(td_to_hours)
+
+            if sort_mode == "Más lentas Nuevo→BO":
+                tt = tt.sort_values("_h_nb", ascending=False)
+            elif sort_mode == "Más lentas BO→Entregado":
+                tt = tt.sort_values("_h_be", ascending=False)
+            elif sort_mode == "Más lentas Total a Entregado":
+                tt = tt.sort_values("_h_te", ascending=False)
+            else:
+                if "STG_Entregado_DT" in tt.columns and tt["STG_Entregado_DT"].notna().any():
+                    tt = tt.sort_values("STG_Entregado_DT", ascending=False)
+                else:
+                    tt = tt.sort_values("CREATED_DT", ascending=False)
+
+            cols_main = [c for c in [
+                "Estatus",
+                "Centro Original", "Jefe directo", "Vendedor",
+                "Cliente", "Telefono", "Folio", "Programacion",
+                "CREATED_DT", "BO_DT", "STG_Entregado_DT",
+                "Tiempo Nuevo→BO", "Tiempo BO→Entregado", "Tiempo Total a Entregado",
+                "Venta", "ENTREGADO_SIN_VENTA",
+            ] if c in tt.columns]
+
+            show = tt[cols_main].head(int(topn)).copy().rename(
+                columns={
+                    "Vendedor": "Ejecutivo",
+                    "CREATED_DT": "Fecha Creación",
+                    "BO_DT": "Fecha Back Office",
+                    "STG_Entregado_DT": "Fecha Entregado",
+                }
+            )
+            st.dataframe(show, use_container_width=True, height=520, hide_index=True)
+
+            if entregado_sin_venta_cnt > 0:
+                st.warning(f"⚠️ Hay **{entregado_sin_venta_cnt}** órdenes en **Entregado** pero **sin Venta** (revisar / recuperar).")
                 with st.expander("Ver cuáles son Entregado sin Venta", expanded=True):
                     df_esv = view[view["ENTREGADO_SIN_VENTA"]].copy()
                     df_esv["Antigüedad"] = df_esv["TD_Age_Desde_Creacion"].apply(fmt_timedelta)
 
                     cols_esv = [c for c in [
                         "Antigüedad", "Jefe directo", "Vendedor", "Cliente", "Telefono", "Folio",
-                        "Centro", "Estatus", "Venta", "Fecha creacion", "Back Office"
+                        "Centro", "Estatus", "Venta", "Fecha creacion", "Back Office",
                     ] if c in df_esv.columns]
 
                     show_esv = df_esv[cols_esv].copy().rename(columns={"Vendedor": "Ejecutivo"})
                     show_esv = show_esv.assign(_age=df_esv["TD_Age_Desde_Creacion"]).sort_values("_age", ascending=False).drop(columns=["_age"], errors="ignore")
 
-                    st.dataframe(show_esv, use_container_width=True)
+                    st.dataframe(show_esv, use_container_width=True, hide_index=True)
 
                     st.download_button(
                         "Descargar Entregado sin Venta (Excel)",
@@ -1161,95 +1447,42 @@ def main():
     # ============================
     with tabs[1]:
         if df.empty:
-            st.info("No hay datos para los filtros actuales.")
+            st.info("No hay datos para los filtros seleccionados.")
         else:
             view, meta = build_view(df, fecha_ini, fecha_fin)
             counts = compute_flow_counts(view)
 
-            st.subheader("📊 Gráficas principales")
+            st.subheader("📊 Gráficas (enfoque jefe)")
 
             c1, c2 = st.columns(2)
             with c1:
-                st.plotly_chart(make_funnel(counts), use_container_width=True)
+                st.plotly_chart(make_funnel(counts), use_container_width=True, key="t1_funnel")
             with c2:
-                st.plotly_chart(make_flow_bar(counts), use_container_width=True)
+                st.plotly_chart(make_flow_bar(counts), use_container_width=True, key="t1_flow_bar")
 
-            fig_backlog = make_backlog_over_time(view)
-            if fig_backlog is not None:
-                st.plotly_chart(fig_backlog, use_container_width=True)
+            fig_buckets = make_time_buckets_chart(view)
+            if fig_buckets is not None:
+                st.plotly_chart(fig_buckets, use_container_width=True, key="t1_buckets")
 
-            fig_bneck = make_bottleneck_chart(view)
-            if fig_bneck is not None:
-                st.plotly_chart(fig_bneck, use_container_width=True)
+            fig_sc = make_scatter_orders(view, color_by=("Centro Original" if "Centro Original" in view.columns else None))
+            if fig_sc is not None:
+                st.plotly_chart(fig_sc, use_container_width=True, key="t1_scatter")
 
-            fig_wf = make_stage_waterfall(view)
-            if fig_wf is not None:
-                st.plotly_chart(fig_wf, use_container_width=True)
-            else:
-                st.info("Waterfall por etapas requiere que el TVF traiga fechas/hora por etapa (además de Back Office).")
+            with st.expander("Extras (solo si lo necesitas)", expanded=False):
+                fig_backlog = make_backlog_over_time(view)
+                if fig_backlog is not None:
+                    st.plotly_chart(fig_backlog, use_container_width=True, key="t1_backlog")
 
-            fig_tr = make_trends(view, meta)
-            if fig_tr is not None:
-                st.plotly_chart(fig_tr, use_container_width=True)
-
-            st.markdown("---")
-            st.subheader("⏱️ SLA y tiempos")
-
-            cA, cB = st.columns(2)
-            with cA:
-                if meta["has_activation_dt"] and view["H_BO_a_Act"].notna().any():
-                    ba = view[view["H_BO_a_Act"].notna()].copy()
-                    sla_ok = int((ba["H_BO_a_Act"] <= float(sla_h)).sum())
-                    sla_total = int(ba.shape[0])
-                    sla_rate = (sla_ok / sla_total) if sla_total else np.nan
-                else:
-                    sla_rate = np.nan
-                st.plotly_chart(make_sla_gauge(sla_rate, int(sla_h)), use_container_width=True)
-
-                fig_sla_tr = make_sla_trend(view, int(sla_h), meta)
-                if fig_sla_tr is not None:
-                    st.plotly_chart(fig_sla_tr, use_container_width=True)
-
-            with cB:
-                if meta["has_activation_dt"] and view["H_BO_a_Act"].notna().any():
-                    fig = px.histogram(view[view["H_BO_a_Act"].notna()], x="H_BO_a_Act", nbins=40,
-                                       title="Distribución: BO → Activación (horas exactas)")
-                else:
-                    fig = px.histogram(view[view["H_Age_Desde_BO"].notna()], x="H_Age_Desde_BO", nbins=40,
-                                       title="Distribución: Antigüedad desde Back Office (horas exactas)")
-                st.plotly_chart(fig, use_container_width=True)
-
-            st.markdown("---")
-            st.subheader("🧭 Mapa de calor (cuándo se crean más órdenes)")
-            fig_hm = make_heatmap_created(view)
-            if fig_hm is not None:
-                st.plotly_chart(fig_hm, use_container_width=True)
-
-            st.markdown("---")
-            st.subheader("👥 Pendientes por Supervisor / Ejecutivo")
-
-            open_mask = ~view["Estatus"].astype(str).eq("Entregado")
-
-            if "Jefe directo" in view.columns:
-                by_sup = view.loc[open_mask].groupby("Jefe directo", as_index=False).size().rename(columns={"size": "Pendientes"})
-                by_sup = by_sup.sort_values("Pendientes", ascending=False).head(15)
-                if not by_sup.empty:
-                    fig_sup = px.bar(by_sup, x="Pendientes", y="Jefe directo", orientation="h", title="Pendientes por Supervisor (Top 15)")
-                    st.plotly_chart(fig_sup, use_container_width=True)
-
-            if "Vendedor" in view.columns:
-                by_exec = view.loc[open_mask].groupby("Vendedor", as_index=False).size().rename(columns={"size": "Pendientes"})
-                by_exec = by_exec.sort_values("Pendientes", ascending=False).head(15)
-                if not by_exec.empty:
-                    fig_exec = px.bar(by_exec, x="Pendientes", y="Vendedor", orientation="h", title="Pendientes por Ejecutivo (Top 15)")
-                    st.plotly_chart(fig_exec, use_container_width=True)
+                fig_hm = make_heatmap_created(view)
+                if fig_hm is not None:
+                    st.plotly_chart(fig_hm, use_container_width=True, key="t1_heatmap")
 
     # ============================
     # TAB 2: PENDIENTES A RECUPERAR
     # ============================
     with tabs[2]:
         if df.empty:
-            st.info("No hay datos para los filtros actuales.")
+            st.info("No hay datos para los filtros seleccionados.")
         else:
             view, _ = build_view(df, fecha_ini, fecha_fin)
             work = view.copy()
@@ -1274,7 +1507,7 @@ def main():
             cols = [c for c in [
                 "Estatus",
                 "Jefe directo", "Vendedor", "Cliente", "Telefono", "Folio", "Centro", "Venta",
-                "TD_Age_Desde_Creacion", "TD_Age_Desde_BO"
+                "TD_Age_Desde_Creacion", "TD_Age_Desde_BO",
             ] if c in crit.columns]
 
             show = crit[cols].copy().rename(columns={"Vendedor": "Ejecutivo"})
@@ -1285,15 +1518,16 @@ def main():
             )
             show.drop(columns=["TD_Age_Desde_Creacion", "TD_Age_Desde_BO"], inplace=True, errors="ignore")
 
-            st.dataframe(show, use_container_width=True)
+            st.dataframe(show, use_container_width=True, hide_index=True)
 
             if not crit.empty:
                 by_stage = crit.groupby("Estatus", as_index=False).size().rename(columns={"size": "Críticos"})
                 by_stage["Estatus"] = pd.Categorical(by_stage["Estatus"], categories=FLOW_STAGES_NO_TOTAL, ordered=True)
                 by_stage = by_stage.sort_values("Estatus")
-                fig = px.bar(by_stage, x="Estatus", y="Críticos", title="Críticos por etapa")
+                
+                fig = px.bar(by_stage, x="Estatus", y="Críticos", title="Críticos por etapa", text_auto=True, template="plotly_white")
                 fig.update_xaxes(type="category")
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, key="t2_criticos_por_etapa")
 
             st.download_button(
                 "Descargar críticos (Excel)",
@@ -1307,18 +1541,23 @@ def main():
     # ============================
     with tabs[3]:
         if df.empty:
-            st.info("No hay datos para los filtros actuales.")
+            st.info("No hay datos para los filtros seleccionados.")
         else:
             view, meta = build_view(df, fecha_ini, fecha_fin)
-
             detail = view.copy()
 
-            # ✅ Tiempo Nuevo→BO: si ya tiene BO => TD_Creacion_a_BO
-            # ✅ si sigue en Nuevo y no tiene BO => En proceso desde Fecha Creación
             detail["Tiempo Nuevo→BO (HH:MM)"] = [
                 (fmt_timedelta(done) if (done is not None and pd.notna(done))
                  else (f"En proceso · {fmt_timedelta(age)}" if (str(stg) == "Nuevo" and age is not None and pd.notna(age)) else "—"))
                 for done, age, stg in zip(detail["TD_Creacion_a_BO"], detail["TD_Age_Desde_Creacion"], detail["Estatus"])
+            ]
+            detail["Tiempo BO→Entregado (HH:MM)"] = [
+                fmt_done_or_in_process(done, age)
+                for done, age in zip(detail["TD_BO_a_Entregado"], detail["TD_Age_Desde_BO"])
+            ]
+            detail["Tiempo Total a Entregado (HH:MM)"] = [
+                fmt_done_or_in_process(done, age)
+                for done, age in zip(detail["TD_Creacion_a_Entregado"], detail["TD_Age_Desde_Creacion"])
             ]
 
             detail["Tiempo BO→Act (HH:MM)"] = [
@@ -1333,30 +1572,28 @@ def main():
             detail["Antigüedad desde Creación (HH:MM)"] = detail["TD_Age_Desde_Creacion"].apply(fmt_timedelta)
             detail["Antigüedad desde BO (HH:MM)"] = detail["TD_Age_Desde_BO"].apply(fmt_timedelta)
 
-            # Volvemos a sanitizar justo antes de mostrar (doble seguridad visual)
-            for c in ["STG_Solicitado_DT","STG_EnPreparacion_DT","STG_EnEntrega_DT","STG_Reprogramado_DT","STG_Entregado_DT"]:
+            for c in ["STG_Solicitado_DT", "STG_EnPreparacion_DT", "STG_EnEntrega_DT", "STG_Reprogramado_DT", "STG_Entregado_DT"]:
                 if c in detail.columns:
                     detail[c] = pd.to_datetime(detail[c], errors="coerce")
                     detail[c] = sanitize_dates(detail[c])
 
             keep = [c for c in [
                 "Estatus", "Jefe directo", "Vendedor", "Cliente", "Telefono", "Folio", "Centro",
-                "Venta", "CREATED_DT", "BO_DT", "ACT_DT",
-                "STG_Solicitado_DT","STG_EnPreparacion_DT","STG_EnEntrega_DT","STG_Reprogramado_DT","STG_Entregado_DT",
-                "Tiempo Nuevo→BO (HH:MM)", "Tiempo BO→Act (HH:MM)", "Tiempo Total (HH:MM)",
+                "Venta", "CREATED_DT", "BO_DT", "STG_Entregado_DT", "ACT_DT",
+                "Tiempo Nuevo→BO (HH:MM)",
+                "Tiempo BO→Entregado (HH:MM)",
+                "Tiempo Total a Entregado (HH:MM)",
+                "Tiempo BO→Act (HH:MM)",
+                "Tiempo Total (HH:MM)",
                 "Antigüedad desde Creación (HH:MM)", "Antigüedad desde BO (HH:MM)",
-                "ENTREGADO_SIN_VENTA"
+                "ENTREGADO_SIN_VENTA",
             ] if c in detail.columns]
 
             rename_map = {
                 "Vendedor": "Ejecutivo",
-                "STG_Solicitado_DT": "Fecha Solicitado",
-                "STG_EnPreparacion_DT": "Fecha En preparacion",
-                "STG_EnEntrega_DT": "Fecha En entrega",
-                "STG_Reprogramado_DT": "Fecha Reprogramado",
-                "STG_Entregado_DT": "Fecha Entregado",
                 "CREATED_DT": "Fecha Creacion",
                 "BO_DT": "Fecha Back Office",
+                "STG_Entregado_DT": "Fecha Entregado",
                 "ACT_DT": "Fecha Activacion",
             }
 
@@ -1365,7 +1602,7 @@ def main():
                 show = show.sort_values("Fecha Creacion", ascending=False)
 
             st.subheader("📄 Detalle completo")
-            st.dataframe(show, use_container_width=True)
+            st.dataframe(show, use_container_width=True, hide_index=True)
 
             summary = pd.DataFrame([{
                 "Periodo": f"{fecha_ini} a {fecha_fin}",
@@ -1381,6 +1618,7 @@ def main():
                 file_name=f"reporte_flujo_tiempos_{fecha_ini}_{fecha_fin}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
+
 
 if __name__ == "__main__":
     main()
