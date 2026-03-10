@@ -1,3 +1,14 @@
+# app.py ✅ BOSS-READY + INYECCIÓN DIRECTA DE RASTREO + VISUALES EJECUTIVOS
+# ✅ FIX: Parche Anti-Futuro. Previene que fechas invertidas rompan la gráfica.
+# ✅ NUEVO: Matriz de Cuellos de Botella (100% stacked bar) para ver la salud de cada sub-proceso.
+# ✅ NUEVO: Barras apiladas en el Top Lentas para desglosar en qué etapa perdieron el tiempo.
+# ✅ NUEVO (ENFASIS): Bloque "Executive Story" arriba: Cuello #1 + %>umbral + mediana + %sin dato + ranking de etapas.
+# ✅ UI/UX: Filtros en cascada inteligentes (Centro -> Sup -> Ejecutivo), Alertas ocultas para limpiar la vista.
+# ✅ UI/UX: Selector de periodo "Dummy-Friendly" (Solo Año y Mes con nombres en español).
+# ✅ UI/UX: Tema automático (dark/light) + Plotly estilo consistente para que TODO sea más legible.
+# ✅ THEME MATCH: mismo enfoque que tu dashboard "Ventas ExpertCell" (CSS neutral con vars + header transparente + dotted bg)
+# ✅ NUEVO: Tracking por días SOLO de Back Office → Entregado + tabla detalle por bucket
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -38,22 +49,21 @@ st.set_page_config(
 )
 
 # -------------------------------------------------
-# THEME (READ ONLY — we do NOT force anything)  ✅ same as your other dashboard
+# THEME (READ ONLY — we do NOT force anything)
 # -------------------------------------------------
 try:
-    theme_base = st.get_option("theme.base") or "light"  # "light" | "dark"
+    theme_base = st.get_option("theme.base") or "light"
 except Exception:
     theme_base = "light"
 
 IS_DARK = str(theme_base).lower() == "dark"
 PLOTLY_TEMPLATE = "plotly_dark" if IS_DARK else "plotly_white"
 
-# Readability helpers (labels + grids)
 TEXT_LABEL_COLOR = "white" if IS_DARK else "black"
 GRID_COLOR = "rgba(127,127,127,0.22)" if IS_DARK else "rgba(127,127,127,0.18)"
 
 # -------------------------------------------------
-# NEUTRAL, THEME-FRIENDLY CSS (no forced colors) ✅ copied approach from your other dashboard
+# NEUTRAL, THEME-FRIENDLY CSS
 # -------------------------------------------------
 st.markdown(
     """
@@ -100,7 +110,6 @@ section[data-testid="stSidebar"] [data-baseweb="tag"]{
   font-weight: 800 !important;
 }
 
-/* ✅ KPI + pills styled theme-friendly (no forced dark/light colors) */
 .flow-wrap{
   display:flex;
   gap: 10px;
@@ -139,7 +148,6 @@ section[data-testid="stSidebar"] [data-baseweb="tag"]{
 
 div[data-testid="stPlotlyChart"] > div{ border-radius: 16px; }
 
-/* Plotly transparent */
 .js-plotly-plot .plotly .main-svg { background-color: rgba(0,0,0,0) !important; }
 </style>
 """,
@@ -283,12 +291,9 @@ def render_flow_pills(counts: dict):
     st.markdown(html, unsafe_allow_html=True)
 
 # -------------------------------------------------
-# PLOTLY THEME HELPERS (transparent + readable labels)
+# PLOTLY THEME HELPERS
 # -------------------------------------------------
 def add_bar_value_labels(fig: go.Figure) -> go.Figure:
-    """
-    Adds value labels to BAR traces ONLY when they don't already have text/texttemplate.
-    """
     try:
         for tr in getattr(fig, "data", []) or []:
             if getattr(tr, "type", "") != "bar":
@@ -312,10 +317,6 @@ def add_bar_value_labels(fig: go.Figure) -> go.Figure:
 
 
 def _ensure_text_visible(fig: go.Figure) -> go.Figure:
-    """
-    Ensures text/labels are readable with the current theme (dark/light),
-    without changing backgrounds.
-    """
     try:
         for tr in getattr(fig, "data", []) or []:
             has_text = getattr(tr, "text", None) is not None
@@ -372,7 +373,7 @@ def apply_plotly_theme(fig: go.Figure) -> go.Figure:
     return fig
 
 # -------------------------------------------------
-# TEXT NORMALIZATION & SANITIZATION (ANTI-1900)
+# TEXT NORMALIZATION & SANITIZATION
 # -------------------------------------------------
 def _norm_col(s: str) -> str:
     if s is None:
@@ -964,7 +965,7 @@ def build_view(df_ctx: pd.DataFrame, fecha_ini: date, fecha_fin: date):
     return df, meta
 
 # -------------------------------------------------
-# VISUALS: buckets + top slow + scatter
+# VISUALS
 # -------------------------------------------------
 def _bucket_hours(h: float) -> str:
     if h is None or (isinstance(h, float) and np.isnan(h)):
@@ -985,6 +986,30 @@ def _bucket_hours(h: float) -> str:
 
 
 _BUCKET_ORDER_ALL = ["≤2h", "2–6h", "6–12h", "12–24h", "1–2d", "2–3d", ">3d", "Sin dato"]
+_DAY_BUCKET_ORDER = ["1 día", "2 días", "3 días", "4–5 días", "6–7 días", "7+ días", "Sin dato"]
+
+
+def _bucket_delivery_days(h: float) -> str:
+    if h is None or (isinstance(h, float) and np.isnan(h)):
+        return "Sin dato"
+    try:
+        h = float(h)
+    except Exception:
+        return "Sin dato"
+
+    if h < 0:
+        return "Sin dato"
+    if h <= 24:
+        return "1 día"
+    if h <= 48:
+        return "2 días"
+    if h <= 72:
+        return "3 días"
+    if h <= 120:
+        return "4–5 días"
+    if h <= 168:
+        return "6–7 días"
+    return "7+ días"
 
 
 def make_time_buckets_chart(view: pd.DataFrame, include_sin_dato: bool = False) -> go.Figure | None:
@@ -1052,7 +1077,6 @@ def make_time_buckets_chart(view: pd.DataFrame, include_sin_dato: bool = False) 
     fig.update_xaxes(title="Rango de Tiempo", showgrid=False)
 
     apply_plotly_theme(fig)
-        # ✅ FORCE: bar value labels ALWAYS white
     for tr in fig.data:
         if getattr(tr, "type", "") == "bar":
             tr.update(
@@ -1061,6 +1085,134 @@ def make_time_buckets_chart(view: pd.DataFrame, include_sin_dato: bool = False) 
                 insidetextfont=dict(color="white"),
             )
     return fig
+
+
+def make_delivery_days_tracking_chart(view: pd.DataFrame, include_sin_dato: bool = False) -> go.Figure | None:
+    """
+    Tracking de órdenes ENTREGADAS agrupadas por días transcurridos:
+    SOLO BO -> Entregado
+    """
+    if view.empty:
+        return None
+
+    d = view[view["Estatus"].astype(str).eq("Entregado")].copy()
+    if d.empty:
+        return None
+
+    if "TD_BO_a_Entregado" not in d.columns:
+        return None
+
+    h = d["TD_BO_a_Entregado"].apply(td_to_hours)
+    vc = h.apply(_bucket_delivery_days).value_counts().to_dict()
+
+    rows = []
+    for k, v in vc.items():
+        rows.append({
+            "Rango": k,
+            "Órdenes": int(v),
+        })
+
+    if not rows:
+        return None
+
+    dfb = pd.DataFrame(rows)
+
+    if not include_sin_dato:
+        dfb = dfb[dfb["Rango"] != "Sin dato"].copy()
+
+    bucket_order = _DAY_BUCKET_ORDER if include_sin_dato else [x for x in _DAY_BUCKET_ORDER if x != "Sin dato"]
+    dfb["Rango"] = pd.Categorical(dfb["Rango"], categories=bucket_order, ordered=True)
+    dfb = dfb.sort_values("Rango")
+
+    fig = px.bar(
+        dfb,
+        x="Rango",
+        y="Órdenes",
+        text_auto=True,
+        title="📦 Tracking de entregadas por días transcurridos (Back Office → Entregado)",
+        template=PLOTLY_TEMPLATE,
+    )
+
+    fig.update_traces(
+        textfont_size=13,
+        textangle=0,
+        textposition="outside",
+        cliponaxis=False,
+        textfont_color="white",
+    )
+    fig.update_yaxes(title="Cantidad de Órdenes", showgrid=True, gridcolor=GRID_COLOR)
+    fig.update_xaxes(title="Días transcurridos", showgrid=False)
+
+    apply_plotly_theme(fig)
+    for tr in fig.data:
+        if getattr(tr, "type", "") == "bar":
+            tr.update(
+                textfont=dict(color="white"),
+                outsidetextfont=dict(color="white"),
+                insidetextfont=dict(color="white"),
+            )
+
+    return fig
+
+
+def build_delivery_days_detail_table(view: pd.DataFrame, include_sin_dato: bool = False) -> pd.DataFrame:
+    """
+    Tabla detalle de órdenes entregadas clasificadas por rango de días
+    SOLO para BO -> Entregado.
+    """
+    if view.empty:
+        return pd.DataFrame()
+
+    d = view[view["Estatus"].astype(str).eq("Entregado")].copy()
+    if d.empty or "TD_BO_a_Entregado" not in d.columns:
+        return pd.DataFrame()
+
+    d["Rango días BO→Entregado"] = d["TD_BO_a_Entregado"].apply(td_to_hours).apply(_bucket_delivery_days)
+
+    if not include_sin_dato:
+        d = d[d["Rango días BO→Entregado"] != "Sin dato"].copy()
+
+    categories = _DAY_BUCKET_ORDER if include_sin_dato else [x for x in _DAY_BUCKET_ORDER if x != "Sin dato"]
+    d["Rango días BO→Entregado"] = pd.Categorical(
+        d["Rango días BO→Entregado"],
+        categories=categories,
+        ordered=True,
+    )
+
+    out = d.copy()
+    out["Tiempo BO→Entregado (HH:MM)"] = out["TD_BO_a_Entregado"].apply(fmt_timedelta)
+
+    keep = [c for c in [
+        "Rango días BO→Entregado",
+        "Jefe directo",
+        "Vendedor",
+        "Cliente",
+        "Telefono",
+        "Folio",
+        "Programacion",
+        "Centro",
+        "BO_DT",
+        "STG_Entregado_DT",
+        "Tiempo BO→Entregado (HH:MM)",
+    ] if c in out.columns]
+
+    out = out[keep].copy()
+
+    out = out.rename(columns={
+        "Vendedor": "Ejecutivo",
+        "BO_DT": "Fecha Back Office",
+        "STG_Entregado_DT": "Fecha Entregado",
+    })
+
+    sort_cols = [c for c in ["Rango días BO→Entregado", "Fecha Back Office"] if c in out.columns]
+    if sort_cols:
+        asc_map = {
+            "Rango días BO→Entregado": True,
+            "Fecha Back Office": False,
+        }
+        out = out.sort_values(by=sort_cols, ascending=[asc_map[c] for c in sort_cols])
+
+    return out
 
 
 def make_bottleneck_matrix(view: pd.DataFrame, include_sin_dato: bool = False) -> go.Figure | None:
@@ -1321,7 +1473,7 @@ def make_heatmap_created(view: pd.DataFrame) -> go.Figure | None:
     return fig
 
 # -------------------------------------------------
-# EXEC SUMMARY (bottlenecks) — focus block
+# EXEC SUMMARY
 # -------------------------------------------------
 _STAGE_COLS = {
     "1. Nuevo→BO": "H_Nuevo_a_BO",
@@ -1385,7 +1537,6 @@ def main():
         st.session_state["last_refresh"] = datetime.now()
         st.rerun()
 
-    # ✅ NUEVO: FILTRO DE PERIODO "DUMMY-FRIENDLY"
     st.sidebar.markdown("---")
     st.sidebar.subheader("📅 Periodo de Análisis")
 
@@ -1420,13 +1571,11 @@ def main():
         rastreo_extra = load_rastreo_extra(fecha_ini, fecha_fin)
         consulta = transform_consulta1(raw, hoja, rastreo_extra)
 
-    # ✅ FILTROS LIMPIOS Y EN CASCADA
     st.sidebar.markdown("---")
     st.sidebar.subheader("🔎 Filtros de Operación")
 
     df_filter = consulta.copy()
 
-    # 1. Centro
     if "Centro Original" in df_filter.columns:
         centros = ["Todos"] + sorted([str(c) for c in df_filter["Centro Original"].dropna().unique() if str(c).strip() != ""])
         centro_sel = st.sidebar.selectbox("🏢 Centro", centros, index=0)
@@ -1435,7 +1584,6 @@ def main():
     else:
         centro_sel = "Todos"
 
-    # 2. Supervisor
     if "Jefe directo" in df_filter.columns:
         supervisores = ["Todos"] + sorted([str(s) for s in df_filter["Jefe directo"].dropna().unique() if str(s).strip() != ""])
         supervisor_sel = st.sidebar.selectbox("👤 Supervisor", supervisores, index=0)
@@ -1444,7 +1592,6 @@ def main():
     else:
         supervisor_sel = "Todos"
 
-    # 3. Ejecutivo
     if "Vendedor" in df_filter.columns:
         ejecutivos = ["Todos"] + sorted([str(v) for v in df_filter["Vendedor"].dropna().unique() if str(v).strip() != ""])
         ejecutivo_sel = st.sidebar.selectbox("🎧 Ejecutivo", ejecutivos, index=0)
@@ -1455,7 +1602,6 @@ def main():
 
     df = df_filter.copy()
 
-    # ✅ Alertas a expander
     st.sidebar.markdown("---")
     with st.sidebar.expander("⚙️ Configuración de Alertas (Horas)"):
         st.caption("Define el umbral para considerar una orden como 'Crítica'.")
@@ -1471,7 +1617,7 @@ def main():
     tabs = st.tabs(["Resumen Ejecutivo", "Gráficas", "Pendientes a Recuperar", "Detalle / Export"])
 
     # ============================
-    # TAB 0: RESUMEN (main purpose)
+    # TAB 0: RESUMEN
     # ============================
     with tabs[0]:
         if df.empty:
@@ -1558,6 +1704,22 @@ def main():
                     st.info("No hay datos suficientes para la matriz de cuellos de botella.")
 
             st.markdown("---")
+            st.subheader("📦 Tracking por días hasta Entregado (Back Office → Entregado)")
+
+            fig_tracking_days = make_delivery_days_tracking_chart(view, include_sin_dato=include_sin_dato)
+            if fig_tracking_days is not None:
+                st.plotly_chart(fig_tracking_days, use_container_width=True, key="t0_tracking_days")
+            else:
+                st.info("No hay suficientes órdenes entregadas para construir el tracking por días.")
+
+            detail_days = build_delivery_days_detail_table(view, include_sin_dato=include_sin_dato)
+            if not detail_days.empty:
+                st.caption("Detalle de órdenes clasificadas por rango de días (Back Office → Entregado).")
+                st.dataframe(detail_days, use_container_width=True, hide_index=True)
+            else:
+                st.info("No hay detalle disponible para el tracking por días.")
+
+            st.markdown("---")
             st.subheader("🕵️ Análisis de Lentas y Cuellos de Botella (Top)")
 
             fig_top = make_top_slowest_bar(view, n=20)
@@ -1605,6 +1767,10 @@ def main():
             fig_buckets = make_time_buckets_chart(view, include_sin_dato=False)
             if fig_buckets is not None:
                 st.plotly_chart(fig_buckets, use_container_width=True, key="t1_buckets")
+
+            fig_tracking_days = make_delivery_days_tracking_chart(view, include_sin_dato=False)
+            if fig_tracking_days is not None:
+                st.plotly_chart(fig_tracking_days, use_container_width=True, key="t1_tracking_days")
 
             fig_health = make_bottleneck_matrix(view, include_sin_dato=False)
             if fig_health is not None:
