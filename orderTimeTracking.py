@@ -1872,7 +1872,7 @@ def main():
             view, meta = build_view(df, fecha_ini, fecha_fin)
             counts = compute_flow_counts(view)
 
-            st.subheader("📊 Gráficas (enfoque jefe)")
+            st.subheader("📊 Gráficas ")
 
             c1, c2 = st.columns(2, gap="large")
             with c1:
@@ -1899,7 +1899,7 @@ def main():
             if fig_sc is not None:
                 st.plotly_chart(fig_sc, use_container_width=True, key="t1_scatter")
 
-            with st.expander("Extras (solo si lo necesitas)", expanded=False):
+            with st.expander("Extras ", expanded=False):
                 fig_backlog = make_backlog_over_time(view)
                 if fig_backlog is not None:
                     st.plotly_chart(fig_backlog, use_container_width=True, key="t1_backlog")
